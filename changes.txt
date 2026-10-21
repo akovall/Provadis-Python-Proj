@@ -1,0 +1,38 @@
+CHANGES
+=======
+
+Result on mushroom.jpg: 726 -> 244 paths, 862 KB -> 247 KB, smooth edges instead of jagged ones.
+
+Smoother vectors (preprocess.py, vectorize.py)
+- Stronger noise removal (mean-shift filter) before reducing colors.
+- Colors are picked in Lab color space, and similar colors are merged by color distance (ΔE).
+- Image is upscaled 2x and cleaned (each pixel takes the most common color around it),
+  which removes stair-steps and specks.
+- vtracer no longer reduces colors a second time, it only traces shapes.
+- One "detail" value (1-10) controls vtracer's curve settings (corners, segment length).
+- A background rectangle is painted behind the SVG so the image corners are not rounded off.
+
+Web page (app.py, static/index.html)
+- Start: uvicorn app:app --reload, then open http://127.0.0.1:8000
+- Drag and drop an image, drag across the preview to compare original and SVG.
+- Sliders: Curve detail, Color merge range, Max colors, Remove specks.
+- Shows colors, paths, curves and file size, plus a Download SVG button.
+
+Command line (main.py)
+- New options: --detail, --merge, --colors, --speckle
+  Example: python main.py photo.jpg --detail 2 --merge 15
+
+Other
+- requirements.txt: added fastapi, uvicorn, python-multipart.
+- README.md: updated.
+
+
+THINGS TO KNOW
+==============
+
+- Slow: each slider change takes about 3.5 seconds on the mushroom image.
+  Curve detail and Remove specks skip the color step, but tracing itself is the slow part.
+- The detail slider has a limited range: on the mushroom it only goes from about
+  5,800 to 9,200 curves. For stronger simplification, the next step would be potrace.
+- The web page was tested through its API, not clicked through in a browser yet.
+- Nothing is committed yet.
