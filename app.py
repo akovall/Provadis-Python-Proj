@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from preprocess import decode, prepare, quantize
+from presets import PRESETS, detect
 from vectorize import finish, stats, trace
 
 STATIC = Path(__file__).parent / "static"
@@ -35,19 +36,26 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/api/presets")
+def presets() -> dict:
+    return PRESETS
+
+
 @app.post("/api/upload")
 def upload(file: UploadFile = File(...)) -> dict:
     try:
-        prepared = prepare(decode(file.file.read()))
+        image = decode(file.file.read())
     except ValueError as error:
         raise HTTPException(400, str(error))
+    preset = detect(image)
+    prepared = prepare(image)
     image_id = uuid.uuid4().hex
     with lock:
         images[image_id] = {"prepared": prepared, "key": None, "quantized": None, "colors": 0, "trace_key": None, "raw": None}
         while len(images) > MAX_IMAGES:
             images.popitem(last=False)
     height, width = prepared.shape[:2]
-    return {"id": image_id, "width": width, "height": height}
+    return {"id": image_id, "width": width, "height": height, "preset": preset}
 
 
 @app.post("/api/vectorize")

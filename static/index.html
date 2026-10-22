@@ -50,6 +50,12 @@
   .compare.ready { display: block; }
   .control .check { justify-content: flex-start; gap: 8px; align-items: center; cursor: pointer; }
   .control .check input { width: auto; }
+  .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+  .presets button {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+    padding: 6px 4px; font-weight: 500; white-space: nowrap;
+  }
+  .presets button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .compare.zoomed { cursor: grab; }
   .compare.dragging { cursor: grabbing; }
   .layer { position: absolute; inset: 0; overflow: hidden; }
@@ -110,6 +116,16 @@
   </label>
 
   <div class="control">
+    <label>Preset</label>
+    <div class="presets">
+      <button type="button" data-preset="logo">Logo</button>
+      <button type="button" data-preset="cartoon">Cartoon</button>
+      <button type="button" data-preset="photo">Photo</button>
+    </div>
+    <small>Picked automatically after upload. Moving a slider switches to your own settings.</small>
+  </div>
+
+  <div class="control">
     <label for="detail">Curve detail <output id="detailOut"></output></label>
     <input type="range" id="detail" min="1" max="10" value="4">
     <small>Lower values use fewer Bezier points and give smoother curves.</small>
@@ -167,12 +183,42 @@ const sliders = ["detail", "merge", "colors", "speckle"];
 let imageId = null, fileName = "image", svgText = "", vectorUrl = null;
 let timer = null, running = false, pending = false, split = 0.5;
 
+let presets = {};
+
 for (const name of sliders) {
   const input = $(name), out = $(name + "Out");
   const show = () => out.textContent = input.value;
   show();
-  input.addEventListener("input", () => { show(); schedule(); });
+  input.addEventListener("input", () => { show(); markPreset(null); schedule(); });
 }
+
+fetch("/api/presets").then((response) => response.json()).then((data) => { presets = data; });
+
+function applyPreset(name, auto) {
+  const preset = presets[name];
+  if (!preset) return;
+  for (const slider of sliders) {
+    $(slider).value = preset[slider];
+    $(slider + "Out").textContent = $(slider).value;
+  }
+  $("background").checked = preset.remove_background;
+  markPreset(name, auto);
+}
+
+function markPreset(name, auto = false) {
+  for (const button of document.querySelectorAll("[data-preset]")) {
+    const active = button.dataset.preset === name;
+    button.classList.toggle("active", active);
+    button.textContent = button.dataset.label + (active && auto ? " · auto" : "");
+  }
+}
+
+for (const button of document.querySelectorAll("[data-preset]")) {
+  button.dataset.label = button.textContent;
+  button.addEventListener("click", () => { applyPreset(button.dataset.preset, false); schedule(); });
+}
+// The sliders start with the cartoon values
+markPreset("cartoon");
 
 function schedule() {
   if (!imageId) return;
@@ -231,6 +277,7 @@ async function upload(file) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
+    applyPreset(data.preset, true);
     run();
   } catch (error) {
     $("busy").classList.remove("on");
@@ -328,7 +375,7 @@ compare.addEventListener("pointerup", (event) => {
 });
 compare.addEventListener("pointercancel", endDrag);
 
-$("background").addEventListener("change", schedule);
+$("background").addEventListener("change", () => { markPreset(null); schedule(); });
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
 const drop = $("drop");
 drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
