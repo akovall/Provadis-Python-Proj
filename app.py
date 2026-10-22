@@ -48,15 +48,7 @@ class Settings(BaseModel):
     shapes: bool = True
     max_layers: int | None = Field(None, ge=2, le=500)
     seed: int = Field(0, ge=0)  # another seed gives another variant of the colors and layers
-    ai_upscale: bool = False
-
-
-class RecommendRequest(BaseModel):
-    id: str
-    speckle: int = Field(4, ge=0, le=32)
-    remove_background: bool = True
-    outlines: bool = True
-    shapes: bool = True
+    separate: bool = False  # split into layers; otherwise all colors are one layer (fast)
     ai_upscale: bool = False
 
 
@@ -170,8 +162,8 @@ def result(entry: dict, svg: str, remove_background: bool) -> dict:
     match = difference(svg, reference(entry, remove_background))
     return {
         "svg": svg, "colors": entry["colors"], "match": round(match["delta"], 2),
-        "auto_layers": entry["raw"]["auto_layers"], "ai_seconds": entry["ai_seconds"] if entry["ai"] else None,
-        **stats(svg),
+        "auto_layers": entry["raw"]["auto_layers"], "too_detailed": entry["raw"]["too_detailed"],
+        "ai_seconds": entry["ai_seconds"] if entry["ai"] else None, **stats(svg),
     }
 
 
@@ -191,30 +183,6 @@ def convert(settings: Settings) -> dict:
         settings.model_dump(exclude={"id"}), entry["colors"],
     )
     return response
-
-
-@app.post("/api/recommend")
-def recommend(request: RecommendRequest) -> dict:
-    """Try several settings, compare each with the original and pick the simplest close one."""
-    entry = get_entry(request.id)
-    with gallery.priority():
-        use_ai_upscale(entry, request.ai_upscale)
-        mask = get_mask(entry, request.remove_background, entry["ai"])
-        if not mask.any():
-            raise HTTPException(400, "the image has no visible pixels")
-        merge = choose_merge(entry["prepared"], mask, RECOMMENDED_COLORS)
-        raw = get_trace(
-            entry, RECOMMENDED_COLORS, merge, request.remove_background, request.speckle, request.outlines, request.shapes
-        )
-        svgs = {}
-
-        def render(detail: int) -> str:
-            svgs[detail] = finish(raw, entry["quantized"], detail, entry["size"])
-            return svgs[detail]
-
-        detail, _ = choose_detail(render, reference(entry, request.remove_background))
-        settings = {"colors": RECOMMENDED_COLORS, "merge": merge, "detail": detail, "speckle": request.speckle}
-        return {"settings": settings, **result(entry, svgs[detail], request.remove_background)}
 
 
 @app.get("/gallery")
