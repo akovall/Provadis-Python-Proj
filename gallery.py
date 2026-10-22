@@ -71,6 +71,9 @@ def measure(svg: str, reference: np.ndarray, prepared: np.ndarray, remove_backgr
     height, width = reference.shape[:2]
     png = resvg_py.svg_to_bytes(svg_string=svg, width=width, height=height)
     rendered = cv2.imdecode(np.frombuffer(bytes(png), np.uint8), cv2.IMREAD_UNCHANGED)
+    if rendered.shape[:2] != (height, width):
+        # an SVG traced at another size (e.g. after AI upscaling) can differ in aspect ratio by a rounding pixel
+        rendered = cv2.resize(rendered, (width, height), interpolation=cv2.INTER_LINEAR)
     difference = np.abs(on_white(rendered) - on_white(reference))
     region = foreground(prepared, remove_background) | (rendered[:, :, 3] >= 128)
     return float(difference[region].mean())
@@ -95,7 +98,7 @@ def preset_name(settings: dict) -> str:
 def new_tile(tile_id: str, name: str, source: str) -> dict:
     return {
         "id": tile_id, "name": name, "source": source, "status": "queued", "message": "",
-        "preset": None, "auto": False, "settings": None, "version": 0,
+        "preset": None, "auto": False, "ai": False, "settings": None, "version": 0,
         "width": None, "height": None,
         "colors": None, "paths": None, "curves": None, "bytes": None, "seconds": None, "error": None, "rating": None,
         "svg": None, "original": None, "reference": None, "prepared": None,
@@ -144,17 +147,22 @@ def measure_tile(tile_id: str, version: int) -> None:
 def record(
     upload_id: str, name: str, reference: np.ndarray, prepared: np.ndarray, svg: str, settings: dict, colors: int
 ) -> None:
-    """Add or update the history tile of an uploaded image; its error is measured in the background."""
+    """Add or update the history tile of an uploaded image; its error is measured in the background.
+
+    Results with and without AI upscaling get separate tiles, so the two can be compared side by side.
+    """
+    ai = settings.get("ai_upscale", False)
+    tile_id = upload_id + ("-ai" if ai else "")
     with lock:
-        tile = tiles.get(upload_id)
+        tile = tiles.get(tile_id)
         if tile is None:
-            tile = new_tile(upload_id, name, "history")
+            tile = new_tile(tile_id, name, "history")
             tile.update(
-                original=thumbnail(reference), reference=reference, prepared=prepared,
+                original=thumbnail(reference), reference=reference, prepared=prepared, ai=ai,
                 width=reference.shape[1], height=reference.shape[0],
             )
-            tiles[upload_id] = tile
-            tiles.move_to_end(upload_id, last=False)
+            tiles[tile_id] = tile
+            tiles.move_to_end(tile_id, last=False)
             history = [key for key, item in tiles.items() if item["source"] == "history"]
             for key in history[MAX_HISTORY:]:
                 del tiles[key]
@@ -163,7 +171,7 @@ def record(
             error=None, rating=None, svg=svg, version=tile["version"] + 1, **stats(svg),
         )
         version = tile["version"]
-    jobs.put((measure_tile, upload_id, version))
+    jobs.put((measure_tile, tile_id, version))
 
 
 def listing() -> dict:

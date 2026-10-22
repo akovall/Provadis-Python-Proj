@@ -19,6 +19,7 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 8. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 9. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
 10. `static/compare.js` (with `compare.css`) is the original-vs-SVG view with the split handle and click-to-zoom, used by the main page and the gallery viewer; `static/export.js` saves PNGs.
+11. `upscale.py` is the optional AI upscaling (see [AI upscale](#ai-upscale)); the model is in `models/`.
 
 ## Installation
 
@@ -78,6 +79,7 @@ python main.py --help
 | `--layers` | off | Separate into stacked layers (slower; needed for outlines and simple shapes). Too detailed pictures stay one layer. |
 | `--no-shapes` | off | Trace ellipses, circles and rectangles like any other shape. |
 | `--no-outlines` | off | Trace dark outlines like any other shape instead of redrawing them smoothly. |
+| `--ai-upscale` | off | Upscale small drawings 4× with Real-ESRGAN before tracing (see [AI upscale](#ai-upscale)). |
 
 ### Presets
 
@@ -96,6 +98,18 @@ uvicorn app:app --reload
 ```
 
 Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. The SVG starts as **one layer with all colors**, which is fast even for big photos. **Separate into layers** stacks the shapes from big to small (starting at about 15 layers); then the **Layers** slider sets about how many layers there are (within ±3, all the way right keeps every layer), **Regenerate layers** makes another variant, and Smooth outlines / Detect simple shapes become available. Pictures that are too detailed for layers (more than 1000 areas, like busy photos) stay one layer, and the page says so. The **Layers** panel on the right lists every layer, top layer first; the eye button hides a layer (hidden layers are left out of the download). The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
+
+### AI upscale
+
+Small or blurry drawings and logos trace better when they are first upscaled by a neural network: Real-ESRGAN **animevideo v3** (`models/realesr-animevideov3.onnx`, 2.5 MB) makes edges sharp and colors flat, so thin outlines, letters and claws survive. It runs on the CPU with `onnxruntime` and needs no graphics card.
+
+- Main page: tick **AI upscale**. The note under it shows how long the upscale took. Untick it to compare.
+- Command line: `python main.py drawing.png --ai-upscale`.
+- Gallery: results with and without AI get separate history tiles (the AI one is marked **History · AI**), so their error and the other numbers can be compared directly.
+
+It is only offered for images up to 640 px; larger ones already have enough pixels. It helps drawings and logos most. On photos and soft watercolor pictures the gain is small and the model changes the style (darker outlines, flatter shading). Typical time on a laptop CPU: well under a second for 256 px, about a second for 512 px (measured on Apple Silicon; older Intel laptops can be a few times slower).
+
+In a test with drawings shrunk to 256 px and saved as JPEG, the error of the SVG against the full-size original dropped from 14.5 to 9.2 on the logo, from 15.9 to 10.4 on the dino and from 8.6 to 6.0 on the pixel-art figure.
 
 ### PNG export
 

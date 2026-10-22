@@ -1,4 +1,5 @@
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import gallery
+import upscale
 from preprocess import decode, foreground, prepare, quantize, resize
 from presets import PRESETS, detect
 from quality import difference
@@ -46,7 +48,16 @@ class Settings(BaseModel):
     shapes: bool = True
     max_layers: int | None = Field(None, ge=2, le=500)
     seed: int = Field(0, ge=0)  # another seed gives another variant of the colors and layers
-    separate: bool = False  # split into layers; otherwise all colors are one layer (fast)
+    ai_upscale: bool = False
+
+
+class RecommendRequest(BaseModel):
+    id: str
+    speckle: int = Field(4, ge=0, le=32)
+    remove_background: bool = True
+    outlines: bool = True
+    shapes: bool = True
+    ai_upscale: bool = False
 
 
 @app.get("/")
@@ -70,19 +81,21 @@ def upload(file: UploadFile = File(...)) -> dict:
         prepared = prepare(image)
     image_id = uuid.uuid4().hex
     with lock:
+        # "prepared" follows the AI upscale setting; "plain" is always without it, the size of "reference"
         images[image_id] = {
             "prepared": prepared,
-            "reference": resize(image),  # same size as `prepared`, for the gallery and the match score
+            "reference": resize(image),  # same size as `plain`, for the gallery and the match score
             "size": (image.shape[1], image.shape[0]),
             "name": file.filename or "image",
             "masks": {},
             "key": None, "quantized": None, "colors": 0,
             "trace_key": None, "raw": None,
+            "image": image, "plain": prepared, "ai": False, "ai_seconds": None,
         }
         while len(images) > MAX_IMAGES:
             images.popitem(last=False)
     height, width = image.shape[:2]
-    return {"id": image_id, "width": width, "height": height, "preset": preset}
+    return {"id": image_id, "width": width, "height": height, "preset": preset, "ai_skip": upscale.skip_reason(image)}
 
 
 def get_entry(image_id: str) -> dict:
@@ -93,10 +106,30 @@ def get_entry(image_id: str) -> dict:
     return entry
 
 
-def get_mask(entry: dict, remove_background: bool) -> np.ndarray:
-    if remove_background not in entry["masks"]:
-        entry["masks"][remove_background] = foreground(entry["prepared"], remove_background)
-    return entry["masks"][remove_background]
+def get_mask(entry: dict, remove_background: bool, ai: bool = False) -> np.ndarray:
+    """The object's pixels in the prepared image with or without AI upscaling (without: the size of "reference")."""
+    key = (ai, remove_background)
+    if key not in entry["masks"]:
+        entry["masks"][key] = foreground(entry["prepared"] if ai else entry["plain"], remove_background)
+    return entry["masks"][key]
+
+
+def use_ai_upscale(entry: dict, on: bool) -> None:
+    """Switch "prepared" between the plain and the AI-upscaled image; the cached results are dropped."""
+    if entry["ai"] == on:
+        return
+    if on:
+        reason = upscale.skip_reason(entry["image"])
+        if reason:
+            raise HTTPException(400, "AI upscale is not possible: " + reason)
+        start = time.perf_counter()
+        entry["prepared"] = prepare(upscale.upscale(entry["image"]))
+        entry["ai_seconds"] = round(time.perf_counter() - start, 2)
+    else:
+        entry["prepared"] = entry["plain"]
+    entry["ai"] = on
+    entry["key"] = entry["trace_key"] = None
+    entry["masks"] = {key: mask for key, mask in entry["masks"].items() if not key[0]}
 
 
 def reference(entry: dict, remove_background: bool) -> np.ndarray:
@@ -137,7 +170,8 @@ def result(entry: dict, svg: str, remove_background: bool) -> dict:
     match = difference(svg, reference(entry, remove_background))
     return {
         "svg": svg, "colors": entry["colors"], "match": round(match["delta"], 2),
-        "auto_layers": entry["raw"]["auto_layers"], "too_detailed": entry["raw"]["too_detailed"], **stats(svg),
+        "auto_layers": entry["raw"]["auto_layers"], "ai_seconds": entry["ai_seconds"] if entry["ai"] else None,
+        **stats(svg),
     }
 
 
@@ -145,6 +179,7 @@ def result(entry: dict, svg: str, remove_background: bool) -> dict:
 def convert(settings: Settings) -> dict:
     entry = get_entry(settings.id)
     with gallery.priority():
+        use_ai_upscale(entry, settings.ai_upscale)
         raw = get_trace(
             entry, settings.colors, settings.merge, settings.remove_background, settings.speckle,
             settings.outlines, settings.shapes, settings.max_layers, settings.seed, settings.separate,
@@ -152,9 +187,33 @@ def convert(settings: Settings) -> dict:
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)
     gallery.record(
-        settings.id, entry["name"], entry["reference"], entry["prepared"], svg, settings.model_dump(exclude={"id"}), entry["colors"]
+        settings.id, entry["name"], entry["reference"], entry["plain"], svg, settings.model_dump(exclude={"id"}), entry["colors"]
     )
     return response
+
+
+@app.post("/api/recommend")
+def recommend(request: RecommendRequest) -> dict:
+    """Try several settings, compare each with the original and pick the simplest close one."""
+    entry = get_entry(request.id)
+    with gallery.priority():
+        use_ai_upscale(entry, request.ai_upscale)
+        mask = get_mask(entry, request.remove_background, entry["ai"])
+        if not mask.any():
+            raise HTTPException(400, "the image has no visible pixels")
+        merge = choose_merge(entry["prepared"], mask, RECOMMENDED_COLORS)
+        raw = get_trace(
+            entry, RECOMMENDED_COLORS, merge, request.remove_background, request.speckle, request.outlines, request.shapes
+        )
+        svgs = {}
+
+        def render(detail: int) -> str:
+            svgs[detail] = finish(raw, entry["quantized"], detail, entry["size"])
+            return svgs[detail]
+
+        detail, _ = choose_detail(render, reference(entry, request.remove_background))
+        settings = {"colors": RECOMMENDED_COLORS, "merge": merge, "detail": detail, "speckle": request.speckle}
+        return {"settings": settings, **result(entry, svgs[detail], request.remove_background)}
 
 
 @app.get("/gallery")
