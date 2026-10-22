@@ -64,8 +64,10 @@ def trace(
     that `finish` fits with curves; shapes of one color at the same depth share a layer. With
     `outlines`, dark thin lines are found first; the layers extend under them and they are
     drawn on top of everything. With `max_layers`, the least important layers are blended into
-    their surroundings until about that many are left.
+    their surroundings until about that many are left. Raises ValueError for images too detailed
+    to split into layers (see layers.check_complexity).
     """
+    layers.check_complexity(image, speckle)
     over, found_outlines = strokes.extract(image) if outlines else (None, [])
     outline_layers = len({tuple(o["color"]) for o in found_outlines})
     stack = stack_layers(image, over, speckle, simple_shapes)

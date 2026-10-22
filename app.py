@@ -135,7 +135,10 @@ def get_trace(
         entry["key"] = key
     trace_key = (key, speckle, outlines, shapes, max_layers)
     if entry["trace_key"] != trace_key:
-        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers)
+        try:
+            entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers)
+        except ValueError as error:
+            raise HTTPException(400, str(error))
         entry["trace_key"] = trace_key
     return entry["raw"]
 

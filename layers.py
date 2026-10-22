@@ -19,6 +19,23 @@ FRINGE_WIDTH = 12  # anti-aliasing fringes are thinner than this (in traced pixe
 FRINGE_AREA = 20000  # ... and smaller than this
 FRINGE_NEIGHBOR = 5  # ... and lie between two areas at least this many times bigger
 FRINGE_BLEND = 10  # ... with a color within this ΔE of a blend of those two
+MAX_REGIONS = 1000  # images with more areas than this (busy photos) take too long to split into layers
+
+
+def count_regions(image: np.ndarray, speckle: int) -> int:
+    """About how many layers `build` would make: the areas of one color bigger than a speck."""
+    min_area = (speckle * UPSCALE) ** 2
+    return sum(int((boxes[1:, 4] >= min_area).sum()) for _, _, boxes in components(image, image[:, :, 3] == 255))
+
+
+def check_complexity(image: np.ndarray, speckle: int) -> None:
+    """Refuse images that would give too many layers, before any of the slow steps run."""
+    count = count_regions(image, speckle)
+    if count > MAX_REGIONS:
+        raise ValueError(
+            f"the image is too detailed to split into layers ({count} areas, at most {MAX_REGIONS}); "
+            "try fewer colors or remove bigger specks"
+        )
 
 
 def regions(image: np.ndarray, speckle: int) -> tuple[np.ndarray, list[dict]]:
