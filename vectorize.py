@@ -5,7 +5,7 @@ import numpy as np
 import vtracer
 
 from curves import refit
-from preprocess import UPSCALE
+from preprocess import MAX_SIDE, UPSCALE
 
 
 def lerp(low: float, high: float, detail: int) -> float:
@@ -37,13 +37,16 @@ def trace(image: np.ndarray, speckle: int = 4) -> str:
 
 def finish(raw: str, image: np.ndarray, detail: int = 4) -> str:
     """Refit the traced outlines. Lower `detail` gives fewer Bezier points and rounder curves."""
+    height, width = image.shape[:2]
+    # The pixel values below suit the largest images. Smaller images get proportionally less
+    # smoothing, otherwise details only a few pixels wide (e.g. claws) are rounded away.
+    scale = min(1.0, max(height, width) / (MAX_SIDE * UPSCALE))
     svg = refit(
         raw,
-        error=6.0 * 0.1 ** ((min(max(detail, 1), 10) - 1) / 9),  # 6 px down to 0.6 px, geometric steps
+        error=6.0 * 0.1 ** ((min(max(detail, 1), 10) - 1) / 9) * scale,  # 6 px down to 0.6 px, geometric steps
         corner_angle=lerp(115, 50, detail),
-        sigma=lerp(4.0, 0.5, detail),
+        sigma=lerp(4.0, 0.5, detail) * scale,
     )
-    height, width = image.shape[:2]
     background = ""
     if image[:, :, 3].min() == 255:
         # Smooth curves also round off the image frame, so paint the border color behind everything.
