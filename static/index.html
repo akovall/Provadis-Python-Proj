@@ -25,6 +25,8 @@
     padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
   }
   h1 { font-size: 18px; margin: 0; }
+  .heading { display: flex; align-items: baseline; justify-content: space-between; }
+  .heading a { color: var(--accent); text-decoration: none; }
   .drop {
     border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center;
     color: var(--muted); cursor: pointer;
@@ -44,6 +46,12 @@
     padding: 10px; font: inherit; font-weight: 600; cursor: pointer;
   }
   button:disabled { opacity: .4; cursor: default; }
+  .png { display: grid; gap: 8px; margin-top: -12px; }
+  select {
+    min-width: 0; padding: 8px; font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  select:disabled { opacity: .4; }
   main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .empty { color: var(--muted); }
   .compare { position: relative; overflow: hidden; display: none; user-select: none; touch-action: none; cursor: zoom-in; }
@@ -108,7 +116,10 @@
 </head>
 <body>
 <aside>
-  <h1>Image to SVG</h1>
+  <div class="heading">
+    <h1>Image to SVG</h1>
+    <a href="/gallery" target="_blank">Gallery ↗</a>
+  </div>
 
   <label class="drop" id="drop">
     <input type="file" id="file" accept=".png,.jpg,.jpeg">
@@ -161,6 +172,10 @@
   </div>
 
   <button id="download" disabled>Download SVG</button>
+  <div class="png">
+    <select id="pngScale" aria-label="PNG size" disabled></select>
+    <button id="downloadPng" disabled>Download PNG</button>
+  </div>
   <div class="error" id="error"></div>
 </aside>
 
@@ -177,6 +192,7 @@
   <div class="busy" id="busy"><div class="spinner"></div>Vectorizing…</div>
 </main>
 
+<script src="/static/export.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const sliders = ["detail", "merge", "colors", "speckle"];
@@ -249,6 +265,9 @@ async function run() {
     $("statCurves").textContent = data.curves.toLocaleString();
     $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
     $("download").disabled = false;
+    const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
+    fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
+    $("pngScale").disabled = $("downloadPng").disabled = false;
   } catch (error) {
     $("error").textContent = error.message;
   } finally {
@@ -384,6 +403,15 @@ drop.addEventListener("drop", (event) => {
   event.preventDefault();
   drop.classList.remove("over");
   upload(event.dataTransfer.files[0]);
+});
+
+$("downloadPng").addEventListener("click", async () => {
+  const scale = Number($("pngScale").value);
+  try {
+    await downloadPng(svgText, scale, `${fileName}@${scale}x.png`);
+  } catch (error) {
+    $("error").textContent = error.message;
+  }
 });
 
 $("download").addEventListener("click", () => {
