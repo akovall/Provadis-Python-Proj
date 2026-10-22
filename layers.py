@@ -34,16 +34,24 @@ def can_layer(image: np.ndarray, speckle: int) -> bool:
     return layer_areas(image, speckle) <= MAX_LAYER_AREAS
 
 
-def regions(image: np.ndarray, speckle: int) -> tuple[np.ndarray, list[dict]]:
-    """Connected areas of one color, with specks given to their neighbors first.
+def clean(image: np.ndarray, speckle: int) -> np.ndarray:
+    """Prepare a flat-color image for layering: specks and anti-aliasing fringes go to their neighbors.
 
-    Returns an id map (-1 for transparent) and the areas, biggest first.
+    Done once before the layers are built (also when they are rebuilt to reach a layer count).
     """
     opaque = image[:, :, 3] == 255
     image = remove_specks(image, (speckle * UPSCALE) ** 2 if speckle > 0 else 0)
     # Photos break into thousands of small areas; merge the smallest until layering stays quick.
     image = reduce_regions(image, MAX_REGIONS, (speckle * UPSCALE) ** 2)
-    image = merge_fringes(image, opaque)
+    return merge_fringes(image, opaque)
+
+
+def regions(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
+    """Connected areas of one color (of an image prepared with `clean`).
+
+    Returns an id map (-1 for transparent) and the areas, biggest first.
+    """
+    opaque = image[:, :, 3] == 255
     ids_map = np.full(opaque.shape, -1, np.int32)
     found = []
     for color, ids, boxes in components(image, opaque):
@@ -240,15 +248,15 @@ def close(mask: np.ndarray, radius: int) -> np.ndarray:
     return cv2.resize(closed, mask.shape[::-1], interpolation=cv2.INTER_NEAREST) > 0
 
 
-def build(image: np.ndarray, over: np.ndarray | None = None, speckle: int = 4) -> list[dict]:
-    """Layers from bottom (biggest) to top (smallest).
+def build(image: np.ndarray, over: np.ndarray | None = None) -> list[dict]:
+    """Layers from bottom (biggest) to top (smallest), for an image prepared with `clean`.
 
     `over` marks pixels covered by something drawn above all layers (the outlines), so layers
     may extend under them too. Each layer has its color, its position (x, y), its own pixels
     (`region`), the pixels it may cover because later layers hide them (`free`), and the filled-in
     shape to draw (`shape`), all cropped to the layer's box.
     """
-    ranked, found = regions(image, speckle)
+    ranked, found = regions(image)
     if over is not None:
         ranked = np.where(over & (ranked >= 0), len(found), ranked)  # outlines count as the very last layer
     layers = []

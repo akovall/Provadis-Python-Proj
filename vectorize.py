@@ -25,9 +25,9 @@ def lerp(low: float, high: float, detail: int) -> float:
     return low + (high - low) * (min(max(detail, 1), 10) - 1) / 9
 
 
-def stack_layers(image: np.ndarray, over: np.ndarray | None, speckle: int, simple_shapes: bool) -> list[dict]:
+def stack_layers(image: np.ndarray, over: np.ndarray | None, simple_shapes: bool) -> list[dict]:
     """Layers in drawing order, each with its simple form if it has one."""
-    built = layers.build(image, over, speckle)
+    built = layers.build(image, over)
     forms = [shapes.fit(layer) if simple_shapes else None for layer in built]
     # Position in the stack; a layer can move just below a form that covers it (see below).
     position = [float(i) for i in range(len(built))]
@@ -84,9 +84,10 @@ def trace(
         # the picture down to a few areas per wanted layer first is quick.
         image = layers.reduce_colors(image, max(2, round(COLORS_PER_LAYER * max_layers)))
         image = layers.reduce_regions(image, AREAS_PER_LAYER * max_layers, (speckle * UPSCALE) ** 2)
+    image = layers.clean(image, speckle)  # once; the rounds below rebuild from this
     over, found_outlines = strokes.extract(image) if outlines else (None, [])
     outline_layers = len({tuple(o["color"]) for o in found_outlines})
-    stack = stack_layers(image, over, speckle, simple_shapes)
+    stack = stack_layers(image, over, simple_shapes)
     groups = layers.group(stack)
     result = collect(stack, groups)
     auto_layers = len(result) + outline_layers
@@ -100,7 +101,7 @@ def trace(
         # lower the count by less than one; remove more when the last round fell short.
         remove = min(int(np.ceil(extra / max(effect, 0.5))), extra)
         image = layers.simplify(image, stack, groups, remove)
-        stack = stack_layers(image, over, speckle, simple_shapes)
+        stack = stack_layers(image, over, simple_shapes)
         groups = layers.group(stack)
         result = collect(stack, groups)
         effect = max(count - (len(result) + outline_layers), 0) / remove
