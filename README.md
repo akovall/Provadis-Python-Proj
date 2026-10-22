@@ -1,12 +1,15 @@
 # Provadis-Python-Proj
 
-A small command-line tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector graphics (`.svg`).
+A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector graphics (`.svg`), with a command line and a web page with live sliders.
 
 ## How it works
 
-1. `preprocess.py` prepares the image with OpenCV: it shrinks large images, removes noise and reduces the number of colors.
-2. `vectorize.py` traces the image with [vtracer](https://github.com/visioncortex/vtracer) and saves the SVG.
-3. `main.py` handles the command-line arguments.
+1. `preprocess.py` prepares the image with OpenCV:
+   - shrinks large images and flattens textures and JPEG noise with mean-shift filtering,
+   - picks a color palette with k-means in Lab color space and merges colors that look alike (ΔE threshold),
+   - upscales 2× and assigns every pixel to a palette color, then runs a majority filter to remove stair-steps and specks.
+2. `vectorize.py` traces the flat-color image with [vtracer](https://github.com/visioncortex/vtracer). The curve detail setting controls how many Bezier points are kept.
+3. `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 
 ## Installation
 
@@ -39,6 +42,7 @@ Activate the virtual environment first (see above).
 ```bash
 python main.py photo.png                      # saves photo.svg next to the input
 python main.py photo.jpg --output result.svg
+python main.py photo.jpg --detail 2 --merge 15 # smoother curves, fewer colors
 python main.py --help
 ```
 
@@ -47,7 +51,23 @@ python main.py --help
 ```powershell
 python main.py photo.png                      # saves photo.svg next to the input
 python main.py photo.jpg --output result.svg
+python main.py photo.jpg --detail 2 --merge 15 # smoother curves, fewer colors
 python main.py --help
 ```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--detail` | 4 | Curve detail 1–10. Lower values use fewer Bezier points and give smoother curves. |
+| `--merge` | 8 | Colors closer than this ΔE are combined into one. |
+| `--colors` | 16 | Maximum number of colors. |
+| `--speckle` | 4 | Shapes smaller than this many pixels are dropped. |
+
+### Web page
+
+```bash
+uvicorn app:app --reload
+```
+
+Open http://127.0.0.1:8000, drop an image on the page and move the sliders. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 
 To leave the virtual environment, run `deactivate`.

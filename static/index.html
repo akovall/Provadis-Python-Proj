@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image to SVG</title>
+<style>
+  :root {
+    --bg: #f5f5f4; --panel: #ffffff; --text: #1c1917; --muted: #78716c;
+    --border: #e7e5e4; --accent: #2563eb; --accent-text: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1917; --panel: #292524; --text: #f5f5f4; --muted: #a8a29e;
+      --border: #44403c; --accent: #3b82f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--text); background: var(--bg);
+    display: grid; grid-template-columns: 300px 1fr; height: 100vh;
+  }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center;
+    color: var(--muted); cursor: pointer;
+  }
+  .drop.over { border-color: var(--accent); color: var(--accent); }
+  .drop input { display: none; }
+  .control label { display: flex; justify-content: space-between; font-weight: 600; }
+  .control output { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .control input { width: 100%; accent-color: var(--accent); }
+  .control small { color: var(--muted); display: block; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .stat span { display: block; color: var(--muted); font-size: 12px; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  button {
+    background: var(--accent); color: var(--accent-text); border: 0; border-radius: 6px;
+    padding: 10px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .empty { color: var(--muted); }
+  .compare { position: relative; max-width: 100%; max-height: 100%; display: none; user-select: none; }
+  .compare.ready { display: block; }
+  .compare img { display: block; max-width: calc(100vw - 350px); max-height: calc(100vh - 48px); }
+  .compare .vector { position: absolute; inset: 0; width: 100%; height: 100%; background: var(--bg); }
+  .compare .divider { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; }
+  .compare .tag {
+    position: absolute; top: 8px; padding: 2px 8px; border-radius: 4px; font-size: 12px;
+    background: rgba(0,0,0,.6); color: #fff;
+  }
+  .busy { position: absolute; top: 16px; right: 16px; color: var(--muted); display: none; }
+  .busy.on { display: block; }
+  .error { color: #dc2626; }
+  @media (max-width: 700px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+    aside { border-right: 0; border-bottom: 1px solid var(--border); }
+    .compare img { max-width: calc(100vw - 32px); }
+    main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Image to SVG</h1>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".png,.jpg,.jpeg">
+    <span id="dropText">Drop a PNG or JPG here, or click to choose</span>
+  </label>
+
+  <div class="control">
+    <label for="detail">Curve detail <output id="detailOut"></output></label>
+    <input type="range" id="detail" min="1" max="10" value="4">
+    <small>Lower values use fewer Bezier points and give smoother curves.</small>
+  </div>
+
+  <div class="control">
+    <label for="merge">Color merge range <output id="mergeOut"></output></label>
+    <input type="range" id="merge" min="0" max="40" step="1" value="8">
+    <small>Colors closer than this ΔE are combined into one.</small>
+  </div>
+
+  <div class="control">
+    <label for="colors">Max colors <output id="colorsOut"></output></label>
+    <input type="range" id="colors" min="2" max="48" value="16">
+  </div>
+
+  <div class="control">
+    <label for="speckle">Remove specks <output id="speckleOut"></output></label>
+    <input type="range" id="speckle" min="0" max="20" value="4">
+    <small>Drops shapes smaller than this many pixels.</small>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span>Colors</span><b id="statColors">–</b></div>
+    <div class="stat"><span>Paths</span><b id="statPaths">–</b></div>
+    <div class="stat"><span>Curves</span><b id="statCurves">–</b></div>
+    <div class="stat"><span>Size</span><b id="statSize">–</b></div>
+  </div>
+
+  <button id="download" disabled>Download SVG</button>
+  <div class="error" id="error"></div>
+</aside>
+
+<main id="main">
+  <div class="empty" id="empty">Upload an image to start.</div>
+  <div class="compare" id="compare">
+    <img id="original" alt="Original image">
+    <img class="vector" id="vector" alt="Vectorized image">
+    <div class="divider" id="divider"></div>
+    <span class="tag" style="left:8px">Original</span>
+    <span class="tag" style="right:8px">SVG</span>
+  </div>
+  <div class="busy" id="busy">Vectorizing…</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const sliders = ["detail", "merge", "colors", "speckle"];
+let imageId = null, fileName = "image", svgText = "", vectorUrl = null;
+let timer = null, running = false, pending = false, split = 0.5;
+
+for (const name of sliders) {
+  const input = $(name), out = $(name + "Out");
+  const show = () => out.textContent = input.value;
+  show();
+  input.addEventListener("input", () => { show(); schedule(); });
+}
+
+function schedule() {
+  if (!imageId) return;
+  clearTimeout(timer);
+  timer = setTimeout(run, 250);
+}
+
+async function run() {
+  if (running) { pending = true; return; }
+  running = true;
+  $("busy").classList.add("on");
+  $("error").textContent = "";
+  const body = { id: imageId };
+  for (const name of sliders) body[name] = Number($(name).value);
+  try {
+    const response = await fetch("/api/vectorize", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "conversion failed");
+    svgText = data.svg;
+    if (vectorUrl) URL.revokeObjectURL(vectorUrl);
+    vectorUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+    $("vector").src = vectorUrl;
+    $("statColors").textContent = data.colors;
+    $("statPaths").textContent = data.paths.toLocaleString();
+    $("statCurves").textContent = data.curves.toLocaleString();
+    $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
+    $("download").disabled = false;
+  } catch (error) {
+    $("error").textContent = error.message;
+  } finally {
+    running = false;
+    $("busy").classList.remove("on");
+    if (pending) { pending = false; run(); }
+  }
+}
+
+async function upload(file) {
+  if (!file) return;
+  fileName = file.name.replace(/\.[^.]+$/, "");
+  $("dropText").textContent = file.name;
+  $("error").textContent = "";
+  $("busy").classList.add("on");
+  $("original").src = URL.createObjectURL(file);
+  $("vector").removeAttribute("src");
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const response = await fetch("/api/upload", { method: "POST", body: form });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "upload failed");
+    imageId = data.id;
+    $("empty").style.display = "none";
+    $("compare").classList.add("ready");
+    setSplit(0.5);
+    run();
+  } catch (error) {
+    $("busy").classList.remove("on");
+    $("error").textContent = error.message;
+  }
+}
+
+function setSplit(value) {
+  split = Math.min(Math.max(value, 0), 1);
+  $("vector").style.clipPath = `inset(0 0 0 ${split * 100}%)`;
+  $("divider").style.left = `calc(${split * 100}% - 1px)`;
+}
+
+const compare = $("compare");
+let dragging = false;
+const move = (event) => {
+  const rect = compare.getBoundingClientRect();
+  setSplit((event.clientX - rect.left) / rect.width);
+};
+compare.addEventListener("pointerdown", (event) => { dragging = true; compare.setPointerCapture(event.pointerId); move(event); });
+compare.addEventListener("pointermove", (event) => { if (dragging) move(event); });
+compare.addEventListener("pointerup", () => { dragging = false; });
+
+$("file").addEventListener("change", (event) => upload(event.target.files[0]));
+const drop = $("drop");
+drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("over");
+  upload(event.dataTransfer.files[0]);
+});
+
+$("download").addEventListener("click", () => {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+  link.download = fileName + ".svg";
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+</script>
+</body>
+</html>
