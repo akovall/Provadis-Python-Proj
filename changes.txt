@@ -100,6 +100,29 @@ Simple shapes (shapes.py, round 6)
 - Outlines now keep their original thickness (thicker and thinner parts), see round 5.
 
 
+Stacked layers instead of cut-out pieces (layers.py, round 7)
+- vtracer is gone. The image is split into layers, one per connected area of one color,
+  sorted from the biggest (bottom) to the smallest (top).
+- Layers are no longer cut out where smaller layers lie on them: holes and notches under the
+  layers on top are filled in. The face is one whole shape with the eyes on top; the panda's
+  body is one shape with the dark patches lying on it.
+- Each layer is first checked against simple forms (ellipse, circle, rectangle; only the visible
+  part has to match). All other layers get smooth Bezier curves with sharp corners kept where
+  the edge really turns.
+- Big to small is the rule, with one exception: a layer that becomes a simple form when a
+  neighboring form may lie on top of it moves just below that form. So the mushroom's cheeks are
+  ellipses lying under the eyes (as in the picture), although they are smaller than the eyes.
+- Outlines are drawn last, over everything, and the layers below extend under them.
+- Before layering, thin anti-aliasing fringes between two big areas are split between them,
+  and specks join the most similar neighbor color (so faint lines stay continuous).
+- Every layer reaches 4 px under the layers on top of it, so no gaps open between them.
+- Edge sharpening is lighter now (it made the panda's nose and pupils jagged).
+- Results: panda 52 layers (body, eye patches, cheeks and inner ears are ellipses), match 1.34;
+  mushroom 133 layers (background rectangle, eyes and cheeks ellipses), match 1.03;
+  pixel-art test.png unchanged by the forms (1.48 with, 1.47 without).
+  Converting is faster than with vtracer, and the detail slider takes about 1 s.
+
+
 THINGS TO KNOW
 ==============
 
@@ -112,11 +135,13 @@ THINGS TO KNOW
 - Recommended does not change "Remove background", "Remove specks", "Smooth outlines" or
   "Detect simple shapes"; set those first.
 - Shapes with holes are skipped (anything inside the hole would be hidden under the shape).
+- The panda's nose and pupils still have small bumps; they come from its soft, blurry edges.
+- Exact ellipses are a little different from soft hand-drawn ovals, so the panda's match is a
+  bit higher with forms (1.34) than without (1.16). Untick "Detect simple shapes" if that matters.
 - Recommended is only on the web page, not in the command line.
 - Where two lines cross or meet, the thickness is capped at 2x the line's usual width so the
   junction does not swell.
 - Very thin tapered line tips (under 4 px) stay filled shapes and can look a bit lighter.
 - Finding outlines adds about 2-4 s when the colors or specks change (not for the detail slider).
-- The panda's pupils have slightly ragged edges (with or without outlines).
 - The web page was tested through its API, not clicked through in a browser yet.
 - Nothing is committed yet.

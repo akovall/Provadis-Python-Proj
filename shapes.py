@@ -1,144 +1,112 @@
-"""Find regions that are simple shapes (ellipses, circles, rectangles) and draw them as exact SVG shapes.
+"""Recognize layers that are simple forms (ellipses, circles, rectangles) and draw them as exact SVG shapes.
 
-A traced ellipse is a path whose outline wobbles a little. When a single-color region matches an
-ellipse or rectangle almost exactly, it is taken out of the image before tracing and drawn as a
-real <ellipse>, <circle> or <rect> instead, so it is perfectly smooth and needs no Bezier points.
+A traced ellipse is a path whose outline wobbles a little. When a layer matches an ellipse or a
+rectangle almost exactly, it is drawn as a real <ellipse>, <circle> or <rect> instead: perfectly
+smooth and without Bezier points. Only the visible part of a layer has to match; where later
+layers lie on top (a cheek partly behind an eye), the form may continue underneath.
 """
 
 import cv2
 import numpy as np
 
-from preprocess import give_to_neighbors
-
-MATCH = 0.95  # overlap (intersection over union) a region needs with the shape
-MIN_AREA = 400  # smaller regions are left to the tracer (in traced pixels)
-MAX_HOLES = 0.02  # regions with holes would hide what is inside them, so allow almost none
+MATCH = 0.95  # overlap (intersection over union) the visible part needs with the form
+MIN_AREA = 400  # smaller layers are traced (in traced pixels)
+MAX_HOLES = 0.02  # holes showing what is underneath cannot be part of a simple form
 ROUND = 0.97  # an ellipse with axes this close to equal is drawn as a circle
-MARGIN = 2
+MIN_EDGE = 20  # a partly hidden layer needs at least this many visible edge pixels to fit a form
 
 
 def overlap(a: np.ndarray, b: np.ndarray) -> float:
     return np.logical_and(a, b).sum() / max(np.logical_or(a, b).sum(), 1)
 
 
-def fit_ellipse(mask: np.ndarray) -> tuple[float, dict]:
-    """The ellipse with the same area and spread as the region (from its moments)."""
-    m = cv2.moments(mask, binaryImage=True)
-    cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+def moment_ellipse(mask: np.ndarray) -> dict:
+    """The ellipse with the same area and spread as the region."""
+    m = cv2.moments(mask.astype(np.uint8), binaryImage=True)
     spread = np.array([[m["mu20"], m["mu11"]], [m["mu11"], m["mu02"]]]) / m["m00"]
     values, vectors = np.linalg.eigh(spread)
-    rx, ry = 2 * np.sqrt(max(values[1], 0)), 2 * np.sqrt(max(values[0], 0))
-    angle = float(np.degrees(np.arctan2(vectors[1, 1], vectors[0, 1])))
-    drawn = np.zeros_like(mask)
-    cv2.ellipse(drawn, ((cx, cy), (2 * rx, 2 * ry), angle), 1, -1)
-    return overlap(drawn, mask), {"kind": "ellipse", "cx": cx, "cy": cy, "rx": rx, "ry": ry, "angle": angle}
+    return {
+        "kind": "ellipse", "cx": m["m10"] / m["m00"], "cy": m["m01"] / m["m00"],
+        "rx": 2 * np.sqrt(max(values[1], 0)), "ry": 2 * np.sqrt(max(values[0], 0)),
+        "angle": float(np.degrees(np.arctan2(vectors[1, 1], vectors[0, 1]))),
+    }
 
 
-def fit_rectangle(mask: np.ndarray, contour: np.ndarray) -> tuple[float, dict]:
-    (cx, cy), (w, h), angle = cv2.minAreaRect(contour)
-    drawn = np.zeros_like(mask)
-    cv2.fillPoly(drawn, [np.round(cv2.boxPoints(((cx, cy), (w, h), angle))).astype(np.int32)], 1)
-    return overlap(drawn, mask), {"kind": "rect", "cx": cx, "cy": cy, "w": w, "h": h, "angle": angle}
+def edge_ellipse(points: np.ndarray) -> dict:
+    """The ellipse through the given edge points (for a layer partly hidden behind others)."""
+    (cx, cy), (width, height), angle = cv2.fitEllipse(points.astype(np.float32))
+    return {"kind": "ellipse", "cx": cx, "cy": cy, "rx": width / 2, "ry": height / 2, "angle": angle}
 
 
-def fit_partial_ellipse(mask: np.ndarray, hidden: np.ndarray) -> tuple[float, dict]:
-    """Ellipse fitted only to the visible edge of a region that is partly behind other shapes."""
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    points = max(contours, key=len)[:, 0]
-    near_hidden = cv2.dilate(hidden.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
-    visible_edge = points[~near_hidden[points[:, 1], points[:, 0]]]
-    if len(visible_edge) < 20:
-        return 0.0, {}
-    (cx, cy), (width, height), angle = cv2.fitEllipse(visible_edge.astype(np.float32))
-    drawn = np.zeros_like(mask)
-    cv2.ellipse(drawn, ((cx, cy), (width, height), angle), 1, -1)
-    seen = ~hidden  # behind the other shape anything goes
-    score = overlap(drawn.astype(bool) & seen, mask.astype(bool) & seen)
-    return score, {"kind": "ellipse", "cx": cx, "cy": cy, "rx": width / 2, "ry": height / 2, "angle": angle}
+def rectangle(points: np.ndarray) -> dict:
+    (cx, cy), (w, h), angle = cv2.minAreaRect(points.astype(np.float32))
+    return {"kind": "rect", "cx": cx, "cy": cy, "w": w, "h": h, "angle": angle}
 
 
-def extract(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
-    """Take simple shapes out of a flat-color BGRA image.
-
-    Returns the image with the shapes' pixels given to the neighboring colors, and the shapes
-    in image pixels in drawing order. A second pass finds shapes partly hidden behind the
-    shapes of the first pass (a cheek behind an eye); those are drawn underneath them.
-    """
-    opaque = image[:, :, 3] == 255
-    bgr = np.ascontiguousarray(image[:, :, :3])
-    packed = (bgr[:, :, 0].astype(np.int32) << 16) | (bgr[:, :, 1].astype(np.int32) << 8) | bgr[:, :, 2]
-    packed[~opaque] = -1
-    taken = np.zeros(packed.shape, bool)
-    regions_by_color = {}
-    for color in np.unique(packed):
-        if color >= 0:
-            regions_by_color[color] = cv2.connectedComponentsWithStats((packed == color).astype(np.uint8), connectivity=8)
-
-    def candidates():
-        for color, (count, regions, boxes, _) in regions_by_color.items():
-            for region in range(1, count):
-                x, y, w, h, area = boxes[region]
-                if area < MIN_AREA or x == 0 or y == 0 or x + w == packed.shape[1] or y + h == packed.shape[0]:
-                    continue  # too small, or cut off by the image edge
-                inside = regions[y:y + h, x:x + w] == region
-                if taken[y:y + h, x:x + w][inside].any():
-                    continue
-                yield color, x, y, w, h, area, inside
-
-    def accept(shape, color, x, y, area, inside, w, h):
-        shape["cx"] += x - MARGIN
-        shape["cy"] += y - MARGIN
-        shape["color"] = [(color >> 16) & 255, (color >> 8) & 255, color & 255]
-        shape["area"] = int(area)
-        taken[y:y + h, x:x + w] |= inside
-        return shape
-
-    on_top = []
-    for color, x, y, w, h, area, inside in candidates():
-        mask = np.pad(inside.astype(np.uint8), MARGIN)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        filled = np.zeros_like(mask)
-        cv2.drawContours(filled, contours, -1, 1, -1)
-        if 1 - area / filled.sum() > MAX_HOLES:
-            continue
-        score, shape = max([fit_ellipse(mask), fit_rectangle(mask, max(contours, key=len))], key=lambda c: c[0])
-        if score >= MATCH:
-            on_top.append(accept(shape, color, x, y, area, inside, w, h))
-    if not on_top:
-        return image, []
-
-    first_pass = taken.copy()
-    underneath = []
-    for color, x, y, w, h, area, inside in candidates():
-        y0, y1 = max(y - MARGIN, 0), min(y + h + MARGIN, packed.shape[0])
-        x0, x1 = max(x - MARGIN, 0), min(x + w + MARGIN, packed.shape[1])
-        hidden = np.zeros((h + 2 * MARGIN, w + 2 * MARGIN), bool)
-        hidden[y0 - y + MARGIN:y1 - y + MARGIN, x0 - x + MARGIN:x1 - x + MARGIN] = first_pass[y0:y1, x0:x1]
-        if not hidden.any():
-            continue  # not next to a shape from the first pass
-        score, shape = fit_partial_ellipse(np.pad(inside.astype(np.uint8), MARGIN), hidden)
-        if score >= MATCH:
-            underneath.append(accept(shape, color, x, y, area, inside, w, h))
-    by_size = lambda s: -s["area"]  # noqa: E731 - larger shapes first, so smaller ones are drawn on top
-    return give_to_neighbors(image, taken), sorted(underneath, key=by_size) + sorted(on_top, key=by_size)
+def draw(shape: dict, size: tuple[int, int]) -> np.ndarray:
+    canvas = np.zeros(size, np.uint8)
+    if shape["kind"] == "ellipse":
+        cv2.ellipse(canvas, ((shape["cx"], shape["cy"]), (2 * shape["rx"], 2 * shape["ry"]), shape["angle"]), 1, -1)
+    else:
+        box = cv2.boxPoints(((shape["cx"], shape["cy"]), (shape["w"], shape["h"]), shape["angle"]))
+        cv2.fillPoly(canvas, [np.round(box).astype(np.int32)], 1)
+    return canvas > 0
 
 
-def to_svg(shapes: list[dict]) -> str:
-    elements = []
-    for s in shapes:
-        b, g, r = s["color"]
-        fill = f'fill="#{r:02x}{g:02x}{b:02x}"'
-        rotate = f' transform="rotate({s["angle"]:.1f} {s["cx"]:.1f} {s["cy"]:.1f})"' if abs(s["angle"]) > 0.5 else ""
-        if s["kind"] == "ellipse" and min(s["rx"], s["ry"]) / max(s["rx"], s["ry"]) >= ROUND:
-            radius = (s["rx"] + s["ry"]) / 2
-            elements.append(f'<circle cx="{s["cx"]:.1f}" cy="{s["cy"]:.1f}" r="{radius:.1f}" {fill}/>')
-        elif s["kind"] == "ellipse":
-            elements.append(
-                f'<ellipse cx="{s["cx"]:.1f}" cy="{s["cy"]:.1f}" rx="{s["rx"]:.1f}" ry="{s["ry"]:.1f}"{rotate} {fill}/>'
-            )
-        else:
-            elements.append(
-                f'<rect x="{s["cx"] - s["w"] / 2:.1f}" y="{s["cy"] - s["h"] / 2:.1f}" '
-                f'width="{s["w"]:.1f}" height="{s["h"]:.1f}"{rotate} {fill}/>'
-            )
-    return "\n".join(elements)
+def inside(shape: dict, size: tuple[int, int]) -> bool:
+    """Whether the form lies within the area it was checked in."""
+    if shape["kind"] == "ellipse":
+        corners = cv2.ellipse2Poly(
+            (round(shape["cx"]), round(shape["cy"])), (round(shape["rx"]), round(shape["ry"])),
+            round(shape["angle"]), 0, 360, 5,
+        ).astype(float)
+    else:
+        corners = cv2.boxPoints(((shape["cx"], shape["cy"]), (shape["w"], shape["h"]), shape["angle"]))
+    height, width = size
+    return bool((corners[:, 0] >= -1).all() and (corners[:, 0] <= width + 1).all()
+                and (corners[:, 1] >= -1).all() and (corners[:, 1] <= height + 1).all())
+
+
+def fit(layer: dict) -> dict | None:
+    """The simple form matching this layer, in image pixels, or None."""
+    region, free = layer["region"], layer["free"]
+    if region.sum() < MIN_AREA:
+        return None
+    holes = layer["shape"] & ~region & ~free
+    if holes.sum() > MAX_HOLES * region.sum():
+        return None
+    contours, _ = cv2.findContours(region.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    edge = max(contours, key=len)[:, 0]
+    near_free = cv2.dilate(free.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    hidden = near_free[edge[:, 1], edge[:, 0]]
+    visible_edge = edge[~hidden]
+    if len(visible_edge) < MIN_EDGE:
+        return None
+    candidates = [edge_ellipse(visible_edge) if hidden.any() else moment_ellipse(region), rectangle(visible_edge)]
+    seen = ~free  # under later layers anything goes
+    best, score = None, 0.0
+    for shape in candidates:
+        if not inside(shape, region.shape):
+            continue  # the part outside could not be checked against the picture
+        value = overlap(draw(shape, region.shape) & seen, region & seen)
+        if value > score:
+            best, score = shape, value
+    if score < MATCH:
+        return None
+    best["cx"] += layer["x"]
+    best["cy"] += layer["y"]
+    return best
+
+
+def to_svg(shape: dict, color: list[int]) -> str:
+    b, g, r = color
+    fill = f'fill="#{r:02x}{g:02x}{b:02x}"'
+    cx, cy = shape["cx"], shape["cy"]
+    rotate = f' transform="rotate({shape["angle"]:.1f} {cx:.1f} {cy:.1f})"' if abs(shape["angle"]) > 0.5 else ""
+    if shape["kind"] == "ellipse":
+        rx, ry = shape["rx"], shape["ry"]
+        if min(rx, ry) / max(rx, ry) >= ROUND:
+            return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{(rx + ry) / 2:.1f}" {fill}/>'
+        return f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{rx:.1f}" ry="{ry:.1f}"{rotate} {fill}/>'
+    w, h = shape["w"], shape["h"]
+    return f'<rect x="{cx - w / 2:.1f}" y="{cy - h / 2:.1f}" width="{w:.1f}" height="{h:.1f}"{rotate} {fill}/>'

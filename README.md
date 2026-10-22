@@ -7,21 +7,21 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 1. `preprocess.py` prepares the image with OpenCV:
    - separates the object from the background: a real alpha channel is used if the image has one, otherwise the background is the area of border-like colors connected to the image edge (same-colored areas inside the object stay),
    - brings the image to a working size of about 1024 px (large images are shrunk, small ones enlarged so thin lines survive),
-   - flattens textures and JPEG noise with mean-shift filtering, then sharpens soft anti-aliased edges with a toggle filter so they do not turn into bands of in-between colors,
+   - flattens textures and JPEG noise with mean-shift filtering, then lightly sharpens soft anti-aliased edges with a toggle filter,
    - picks a color palette with k-means in Lab color space and merges colors that look alike (ΔE threshold),
    - upscales 2× and assigns every pixel to a palette color, then runs a majority filter to remove stair-steps and specks.
-2. `vectorize.py` traces the flat-color image with [vtracer](https://github.com/visioncortex/vtracer).
-3. `curves.py` refits every outline with as few Bezier curves as possible: it finds real corners, smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept. Sharp parts get a tighter tolerance (more points), gentle curves fewer points.
-4. `shapes.py` finds areas that are ellipses, circles or rectangles (for example eyes) and draws them as exact SVG `<ellipse>`, `<circle>` or `<rect>` elements. Shapes partly hidden behind another shape (a cheek behind an eye) are found too and drawn underneath it.
-5. `strokes.py` finds outlines (dark, long, thin shapes like contour lines or a mouth), takes them out of the image before tracing and redraws them around a smooth centerline. The thickness is measured from the original at every point, so lines stay thick or thin where they were, just without the wobble. Thick parts attached to a line (a nose) stay filled shapes.
+2. `layers.py` splits the flat-color image into stacked layers, from the biggest area at the bottom to the smallest on top. Layers are not cut out where smaller ones lie on them: a face stays one whole shape with the eyes lying on top. Thin anti-aliasing fringes and specks are merged into their neighbors first.
+3. `shapes.py` checks every layer against simple forms: layers that are ellipses, circles or rectangles (for example eyes) become exact SVG `<ellipse>`, `<circle>` or `<rect>` elements. Only the visible part has to match, so a shape partly behind another one is recognized too.
+4. `curves.py` draws all other layers with as few Bezier curves as possible: it finds real corners (they stay sharp), smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
+5. `strokes.py` finds outlines (dark, long, thin shapes like contour lines or a mouth) and draws them on top of everything, around a smooth centerline. The thickness is measured from the original at every point, so lines stay thick or thin where they were, just without the wobble.
 6. `quality.py` draws the SVG back into pixels to measure how closely it matches the original, and picks the recommended settings.
 7. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
-8. `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
+8. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 9. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
 
 ## Installation
 
-Requires Python 3.10–3.13. vtracer crashes on Python 3.14.
+Requires Python 3.10 or newer.
 
 ### macOS / Linux
 

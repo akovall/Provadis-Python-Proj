@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 
 from curves import refit_loop, smooth, to_path
-from preprocess import give_to_neighbors
 
 DARK = 50  # Lab lightness; only colors darker than this can be outlines
 MIN_LENGTH = 6  # an outline is at least this many times longer than it is wide
@@ -156,10 +155,11 @@ def ribbon(points: np.ndarray, widths: np.ndarray, closed: bool, sigma: float) -
 
 
 def extract(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
-    """Take outlines out of a flat-color BGRA image.
+    """Find the outlines in a flat-color BGRA image.
 
-    Returns the image with outline pixels given to the neighboring colors, and the outlines
-    as {"color", "width", "lines"} where lines are (points as x, y, closed, widths) in image pixels.
+    Returns the pixels the outlines cover (the layers below may extend under them) and the
+    outlines as {"color", "width", "lines"} where lines are (points as x, y, closed, widths)
+    in image pixels.
     """
     opaque = image[:, :, 3] == 255
     bgr = np.ascontiguousarray(image[:, :, :3])
@@ -233,7 +233,7 @@ def extract(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
                 reach = int(width) + 1
                 band[y:y + h, x:x + w] |= cv2.dilate(line.astype(np.uint8), np.ones((reach, reach), np.uint8)) > 0
     if not found:
-        return image, []
+        return outline_pixels, []
     # Small pieces of any color along the edge of a stroke (leftover anti-aliasing) would show as
     # specks next to it: hide them too. Pieces further out stay, so nothing opens a gap.
     near = cv2.dilate(outline_pixels.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
@@ -246,8 +246,7 @@ def extract(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
         hide = ((boxes[:, 4] < MIN_AREA) & (inside > 0.5 * boxes[:, 4])) | (inside > 0.7 * boxes[:, 4])
         hide[0] = False
         outline_pixels |= hide[regions]
-    # The fill shapes meet under the outline.
-    return give_to_neighbors(image, outline_pixels), found
+    return outline_pixels, found
 
 
 def to_svg(outlines: list[dict], error: float, sigma: float) -> str:

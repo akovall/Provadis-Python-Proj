@@ -62,9 +62,9 @@ def prepare(image: np.ndarray) -> np.ndarray:
         # Blur away the enlarged pixel staircase; sharpening then turns it into a smooth edge.
         sigma = 0.6 * scale
         image = np.dstack([cv2.GaussianBlur(image[:, :, :3], (0, 0), sigma), image[:, :, 3]])
-    # Enlarging widens the soft edges too, so they need more sharpening passes.
-    steps = SHARPEN_STEPS + max(0, round(scale) - 1)
-    return sharpen_edges(smooth(image), steps)
+    # Light sharpening only: more passes make soft edges jagged; the leftover soft edges are
+    # merged into their neighbors when the layers are built.
+    return sharpen_edges(smooth(image), SHARPEN_STEPS)
 
 
 def to_lab(image: np.ndarray) -> np.ndarray:

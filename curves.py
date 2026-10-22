@@ -1,8 +1,8 @@
-"""Refit traced outlines with as few cubic Bezier curves as possible.
+"""Fit shape edges with as few cubic Bezier curves as possible.
 
-vtracer splits outlines into many short segments. Here every outline is sampled into
-a dense polyline, real corners are detected, the parts between corners are smoothed
-and then refitted with Schneider's curve-fitting algorithm (Graphics Gems, 1990).
+Every edge is sampled into a dense polyline, real corners are detected (they stay sharp),
+the parts between corners are smoothed and then fitted with Schneider's curve-fitting
+algorithm (Graphics Gems, 1990).
 """
 
 import os
@@ -218,28 +218,17 @@ def pool() -> ProcessPoolExecutor:
     return _pool
 
 
-def refit_path(d: str, error: float, corner_angle: float, sigma: float) -> str | None:
-    loops = [refit_loop(loop, error, corner_angle, sigma) for loop in parse(d)]
-    return to_path(loops) if loops else None
+def refit_loops(loops: list[np.ndarray], error: float, corner_angle: float, sigma: float) -> str:
+    """Smooth path data for one shape given as pixel-edge loops (outer edges and holes)."""
+    return to_path([refit_loop(loop, error, corner_angle, sigma) for loop in loops])
 
 
-def refit(svg: str, error: float, corner_angle: float, sigma: float) -> str:
-    """Replace every path's outline with a smoother one that has fewer Bezier points.
-
-    Paths are independent, so they are refitted in parallel on all CPU cores.
-    """
-    paths = re.findall(r'd="([^"]*)"', svg)
-    work = partial(refit_path, error=error, corner_angle=corner_angle, sigma=sigma)
-    if len(paths) > 8:
-        # Start the longest outlines first so no worker is left with a big one at the end.
-        order = sorted(range(len(paths)), key=lambda i: -len(paths[i]))
-        futures = {i: pool().submit(work, paths[i]) for i in order}
-        results = iter([futures[i].result() for i in range(len(paths))])
-    else:
-        results = map(work, paths)
-
-    def replace(match: re.Match) -> str:
-        result = next(results)
-        return f'd="{result}"' if result else match.group(0)
-
-    return re.sub(r'd="([^"]*)"', replace, svg)
+def refit_all(shapes: list[list[np.ndarray]], error: float, corner_angle: float, sigma: float) -> list[str]:
+    """Path data for many shapes; they are independent, so they are fitted in parallel on all CPU cores."""
+    work = partial(refit_loops, error=error, corner_angle=corner_angle, sigma=sigma)
+    if len(shapes) <= 8:
+        return [work(loops) for loops in shapes]
+    # Start the biggest shapes first so no worker is left with a big one at the end.
+    order = sorted(range(len(shapes)), key=lambda i: -sum(len(loop) for loop in shapes[i]))
+    futures = {i: pool().submit(work, shapes[i]) for i in order}
+    return [futures[i].result() for i in range(len(shapes))]
