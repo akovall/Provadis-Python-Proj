@@ -28,7 +28,7 @@ THUMBNAIL_SIDE = 480
 # Thin outlines shifted by a pixel already add a few points of error, so the limits are not tiny
 GOOD_ERROR = 5  # hard to tell apart from the original
 OKAY_ERROR = 12  # clearly the same picture, but simplified (e.g. visible color bands in photos)
-PRIVATE = {"svg", "original", "reference", "prepared"}  # large fields, served separately
+PRIVATE = {"svg", "original", "reference", "prepared", "image"}  # large fields, served separately
 
 tiles: OrderedDict[str, dict] = OrderedDict()  # history (newest first), then the img/ folder
 lock = threading.Lock()
@@ -102,6 +102,7 @@ def new_tile(tile_id: str, name: str, source: str) -> dict:
         "width": None, "height": None,
         "colors": None, "paths": None, "curves": None, "bytes": None, "seconds": None, "error": None, "rating": None,
         "svg": None, "original": None, "reference": None, "prepared": None,
+        "image": None,  # the original at full size, so the main page can open it for editing
     }
 
 
@@ -115,6 +116,7 @@ def convert_file(tile_id: str, path: Path) -> None:
     update(tile_id, status="working")
     start = time.perf_counter()
     image = load(str(path))
+    update(tile_id, image=image)  # before the slow steps, so even a failed image can be opened for editing
     preset = detect(image)
     settings = PRESETS[preset]
     prepared = prepare(image)
@@ -145,7 +147,8 @@ def measure_tile(tile_id: str, version: int) -> None:
 
 
 def record(
-    upload_id: str, name: str, reference: np.ndarray, prepared: np.ndarray, svg: str, settings: dict, colors: int
+    upload_id: str, name: str, image: np.ndarray, reference: np.ndarray, prepared: np.ndarray, svg: str,
+    settings: dict, colors: int,
 ) -> None:
     """Add or update the history tile of an uploaded image; its error is measured in the background.
 
@@ -158,7 +161,7 @@ def record(
         if tile is None:
             tile = new_tile(tile_id, name, "history")
             tile.update(
-                original=thumbnail(reference), reference=reference, prepared=prepared, ai=ai,
+                original=thumbnail(reference), image=image, reference=reference, prepared=prepared, ai=ai,
                 width=reference.shape[1], height=reference.shape[0],
             )
             tiles[tile_id] = tile
@@ -176,7 +179,10 @@ def record(
 
 def listing() -> dict:
     with lock:
-        public = [{key: value for key, value in tile.items() if key not in PRIVATE} for tile in tiles.values()]
+        public = [
+            {key: value for key, value in tile.items() if key not in PRIVATE} | {"editable": tile["image"] is not None}
+            for tile in tiles.values()
+        ]
     return {"tiles": public, "pending": sum(tile["status"] in ("queued", "working", "measuring") for tile in public)}
 
 
@@ -190,6 +196,12 @@ def full_image(tile_id: str) -> bytes | None:
     """The original at working size (up to 1024 px) as PNG, for the zoomable viewer."""
     reference = file(tile_id, "reference")
     return None if reference is None else cv2.imencode(".png", reference)[1].tobytes()
+
+
+def source_image(tile_id: str) -> bytes | None:
+    """The original at full size as PNG, for editing it on the main page."""
+    image = file(tile_id, "image")
+    return None if image is None else cv2.imencode(".png", image)[1].tobytes()
 
 
 def work() -> None:
