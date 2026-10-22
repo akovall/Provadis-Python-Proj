@@ -15,7 +15,7 @@ except ImportError:  # the feature is optional, everything else works without it
 
 MODEL = Path(__file__).parent / "models" / "realesr-animevideov3.onnx"
 SCALE = 4
-MAX_INPUT_SIDE = 640  # bigger images already have enough pixels, and the model gets slow on them
+MAX_INPUT_SIDE = 1024  # bigger images already have enough pixels, and the model gets slow on them
 
 session = None
 

@@ -54,17 +54,22 @@ def smooth(image: np.ndarray) -> np.ndarray:
     return np.dstack([bgr, image[:, :, 3]])
 
 
-def prepare(image: np.ndarray) -> np.ndarray:
-    """Color-independent steps; the result can be reused for any color settings."""
+def prepare(image: np.ndarray, sharpen: bool = True) -> np.ndarray:
+    """Color-independent steps; the result can be reused for any color settings.
+
+    Without `sharpen` the edges are left as they are: after the AI upscale they are already
+    sharp, and sharpening snaps every edge pixel on its own, which makes letters jagged.
+    """
     scale = work_scale(image)
     image = resize(image)
     if scale > 1:
         # Blur away the enlarged pixel staircase; sharpening then turns it into a smooth edge.
         sigma = 0.6 * scale
         image = np.dstack([cv2.GaussianBlur(image[:, :, :3], (0, 0), sigma), image[:, :, 3]])
+    image = smooth(image)
     # Light sharpening only: more passes make soft edges jagged; the leftover soft edges are
     # merged into their neighbors when the layers are built.
-    return sharpen_edges(smooth(image), SHARPEN_STEPS)
+    return sharpen_edges(image, SHARPEN_STEPS) if sharpen else image
 
 
 def to_lab(image: np.ndarray) -> np.ndarray:
@@ -190,16 +195,23 @@ def mode_filter(labels: np.ndarray, count: int) -> np.ndarray:
 
 
 def quantize(
-    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True, seed: int = 0
+    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True, seed: int = 0,
+    soft_edges: bool = False,
 ) -> tuple[np.ndarray, int]:
     """Reduce to at most `colors` flat colors, merging ones closer than `merge` ΔE, at UPSCALE resolution.
+
+    With `soft_edges` (prepared without sharpening), the colors are picked from a sharpened copy, so
+    the in-between colors of the edges do not become colors of their own. Every edge pixel then goes
+    to the nearest real color, which puts the edge in the middle of the soft step: straight edges
+    stay straight.
 
     Returns a BGRA image (background fully transparent) and the number of colors left after merging.
     """
     mask = foreground(prepared, remove_background)
     if not mask.any():
         raise ValueError("the image has no visible pixels")
-    centers, counts = palette(to_lab(prepared)[mask], colors, seed)
+    source = sharpen_edges(prepared, SHARPEN_STEPS) if soft_edges else prepared
+    centers, counts = palette(to_lab(source)[mask], colors, seed)
     centers = merge_colors(centers, counts, merge)
     height, width = prepared.shape[:2]
     size = (width * UPSCALE, height * UPSCALE)
