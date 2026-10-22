@@ -15,6 +15,9 @@ SMOOTH_FLOOR = 2.0  # minimum smoothing (in edge points), pixel edges have stair
 SVG_HEAD = '<?xml version="1.0" encoding="UTF-8"?>\n<svg version="1.1" xmlns="http://www.w3.org/2000/svg" '
 LAYER_SLACK = 3  # the layer count may end up this far from the requested one
 SIMPLIFY_ROUNDS = 5
+AREAS_PER_LAYER = 10  # with a layer target, the picture is first cut down to about this many areas per layer
+COLORS_PER_LAYER = 0.7  # ... and to this many colors per layer (a layer has one color)
+LOOPS_PER_JOB = 150  # curve fitting is split into jobs of about this many edges, so all CPU cores help
 
 
 def lerp(low: float, high: float, detail: int) -> float:
@@ -57,6 +60,7 @@ def trace(
     outlines: bool = True,
     simple_shapes: bool = True,
     max_layers: int | None = None,
+    separate: bool = False,
 ) -> Traced:
     """Split a flat-color image into stacked layers and find their forms.
 
@@ -64,10 +68,22 @@ def trace(
     that `finish` fits with curves; shapes of one color at the same depth share a layer. With
     `outlines`, dark thin lines are found first; the layers extend under them and they are
     drawn on top of everything. With `max_layers`, the least important layers are blended into
-    their surroundings until about that many are left. Raises ValueError for images too detailed
-    to split into layers (see layers.check_complexity).
+    their surroundings until about that many are left.
+
+    Without `separate` (the default) there is no layering: all colors end up in one layer,
+    which is fast even for big photos; outlines, simple shapes and `max_layers` then do not apply.
+    Pictures too detailed to split (busy photos, see layers.can_layer) also stay one layer;
+    the result then has "too_detailed" set.
     """
-    layers.check_complexity(image, speckle)
+    too_detailed = separate and not layers.can_layer(image, speckle)
+    if not separate or too_detailed:
+        flat = layers.flat(image, speckle)
+        return {"layers": [], "flat": flat, "outlines": [], "auto_layers": 1, "too_detailed": too_detailed}
+    if max_layers:
+        # Building every layer first and removing most of them afterwards would be slow; cutting
+        # the picture down to a few areas per wanted layer first is quick.
+        image = layers.reduce_colors(image, max(2, round(COLORS_PER_LAYER * max_layers)))
+        image = layers.reduce_regions(image, AREAS_PER_LAYER * max_layers, (speckle * UPSCALE) ** 2)
     over, found_outlines = strokes.extract(image) if outlines else (None, [])
     outline_layers = len({tuple(o["color"]) for o in found_outlines})
     stack = stack_layers(image, over, speckle, simple_shapes)
@@ -88,7 +104,7 @@ def trace(
         groups = layers.group(stack)
         result = collect(stack, groups)
         effect = max(count - (len(result) + outline_layers), 0) / remove
-    return {"layers": result, "outlines": found_outlines, "auto_layers": auto_layers}
+    return {"layers": result, "flat": [], "outlines": found_outlines, "auto_layers": auto_layers, "too_detailed": False}
 
 
 def collect(stack: list[dict], groups: list[list[int]]) -> list[dict]:
@@ -150,7 +166,15 @@ def finish(traced: Traced, image: np.ndarray, detail: int = 4, size: tuple[int, 
     # Edges come straight from pixels, so always smooth away at least the pixel stair-steps.
     sigma = max(SMOOTH_FLOOR, lerp(4.0, 0.5, detail) * scale)
     traced_items = [item for layer in traced["layers"] for item in layer["items"] if "loops" in item]
-    paths = iter(refit_all([item["loops"] for item in traced_items], error, lerp(115, 50, detail), sigma))
+    # One color of a photo can have thousands of edges: split it into several jobs.
+    flat_jobs = [(i, item["loops"][start:start + LOOPS_PER_JOB])
+                 for i, item in enumerate(traced["flat"]) for start in range(0, len(item["loops"]), LOOPS_PER_JOB)]
+    jobs = [item["loops"] for item in traced_items] + [loops for _, loops in flat_jobs]
+    fitted = refit_all(jobs, error, lerp(115, 50, detail), sigma)
+    paths = iter(fitted[:len(traced_items)])
+    flat_paths = [""] * len(traced["flat"])
+    for (i, _), d in zip(flat_jobs, fitted[len(traced_items):]):
+        flat_paths[i] += d
     groups = []
     for layer in traced["layers"]:
         b, g, r = layer["color"]
@@ -163,6 +187,13 @@ def finish(traced: Traced, image: np.ndarray, detail: int = 4, size: tuple[int, 
                 parts.append(f'<path d="{next(paths)}" fill="{fill}"/>')
         boxes = [item_bounds(item) for item in layer["items"]]
         groups.append((layer_name(layer["items"]), box_attribute(boxes), parts))
+    if traced["flat"]:
+        parts = []
+        for item, d in zip(traced["flat"], flat_paths):
+            b, g, r = item["color"]
+            parts.append(f'<path d="{d}" fill="#{r:02x}{g:02x}{b:02x}"/>')
+        boxes = [item_bounds(item) for item in traced["flat"]]
+        groups.append((f"All colors ×{len(parts)}", box_attribute(boxes), parts))
     by_color: dict[tuple, list[dict]] = {}
     for outline in traced["outlines"]:
         by_color.setdefault(tuple(outline["color"]), []).append(outline)
@@ -189,9 +220,10 @@ def vectorize(
     outlines: bool = True,
     simple_shapes: bool = True,
     max_layers: int | None = None,
+    separate: bool = False,
 ) -> str:
     """Convert a flat-color image to SVG. Higher `detail` keeps more corners and Bezier points."""
-    return finish(trace(image, speckle, outlines, simple_shapes, max_layers), image, detail, size)
+    return finish(trace(image, speckle, outlines, simple_shapes, max_layers, separate), image, detail, size)
 
 
 def stats(svg: str) -> dict:

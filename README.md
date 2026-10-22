@@ -14,7 +14,7 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 3. `shapes.py` checks every layer against simple forms: layers that are ellipses, circles or rectangles (for example eyes) become exact SVG `<ellipse>`, `<circle>` or `<rect>` elements. Only the visible part has to match, so a shape partly behind another one is recognized too.
 4. `curves.py` draws all other layers with as few Bezier curves as possible: it finds real corners (they stay sharp), smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
 5. `strokes.py` finds outlines (dark, long, thin shapes like contour lines or a mouth) and draws them on top of everything, around a smooth centerline. The thickness is measured from the original at every point, so lines stay thick or thin where they were, just without the wobble.
-6. `quality.py` draws the SVG back into pixels to measure how closely it matches the original, and picks the recommended settings.
+6. `quality.py` draws the SVG back into pixels to measure how closely it matches the original.
 7. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
 8. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 9. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
@@ -75,6 +75,7 @@ python main.py --help
 | `--speckle` | from preset | Shapes smaller than this many pixels are dropped. |
 | `--keep-background` | off | Keep the background instead of making it transparent. |
 | `--seed` | 0 | Another number gives another variant of the colors and layers. |
+| `--layers` | off | Separate into stacked layers (slower; needed for outlines and simple shapes). Too detailed pictures stay one layer. |
 | `--no-shapes` | off | Trace ellipses, circles and rectangles like any other shape. |
 | `--no-outlines` | off | Trace dark outlines like any other shape instead of redrawing them smoothly. |
 
@@ -94,8 +95,7 @@ python main.py --help
 uvicorn app:app --reload
 ```
 
-Open http://127.0.0.1:8000, drop an image on the page and move the sliders. The **Layers** panel on the right lists every layer, top layer first, with a thumbnail; the eye button hides a layer (hidden layers are left out of the download). The **Layers** slider sets about how many layers the SVG should have (within ±3). **Regenerate layers** keeps the settings and makes another variant of the colors and layers. **Recommended for this image** tries several settings, compares each with the original and picks the simplest one that still matches closely. The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
-Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. **Recommended for this image** tries several settings, compares each with the original and picks the simplest one that still matches closely. The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
+Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. The SVG starts as **one layer with all colors**, which is fast even for big photos. **Separate into layers** stacks the shapes from big to small (starting at about 15 layers); then the **Layers** slider sets about how many layers there are (within ±3, all the way right keeps every layer), **Regenerate layers** makes another variant, and Smooth outlines / Detect simple shapes become available. Pictures that are too detailed for layers (more than 1000 areas, like busy photos) stay one layer, and the page says so. The **Layers** panel on the right lists every layer, top layer first; the eye button hides a layer (hidden layers are left out of the download). The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 
 ### PNG export
 

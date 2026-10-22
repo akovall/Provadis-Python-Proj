@@ -13,12 +13,11 @@ from pydantic import BaseModel, Field
 import gallery
 from preprocess import decode, foreground, prepare, quantize, resize
 from presets import PRESETS, detect
-from quality import choose_detail, choose_merge, difference
+from quality import difference
 from vectorize import Traced, finish, stats, trace
 
 STATIC = Path(__file__).parent / "static"
 MAX_IMAGES = 8
-RECOMMENDED_COLORS = 32  # upper limit; the recommended merge decides how many are left
 
 
 @asynccontextmanager
@@ -47,14 +46,7 @@ class Settings(BaseModel):
     shapes: bool = True
     max_layers: int | None = Field(None, ge=2, le=500)
     seed: int = Field(0, ge=0)  # another seed gives another variant of the colors and layers
-
-
-class RecommendRequest(BaseModel):
-    id: str
-    speckle: int = Field(4, ge=0, le=32)
-    remove_background: bool = True
-    outlines: bool = True
-    shapes: bool = True
+    separate: bool = False  # split into layers; otherwise all colors are one layer (fast)
 
 
 @app.get("/")
@@ -124,6 +116,7 @@ def get_trace(
     shapes: bool,
     max_layers: int | None = None,
     seed: int = 0,
+    separate: bool = False,
 ) -> Traced:
     """Quantize and trace, reusing the cached results when the settings did not change."""
     key = (colors, merge, remove_background, seed)
@@ -133,12 +126,9 @@ def get_trace(
         except ValueError as error:
             raise HTTPException(400, str(error))
         entry["key"] = key
-    trace_key = (key, speckle, outlines, shapes, max_layers)
+    trace_key = (key, speckle, outlines, shapes, max_layers, separate)
     if entry["trace_key"] != trace_key:
-        try:
-            entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers)
-        except ValueError as error:
-            raise HTTPException(400, str(error))
+        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers, separate)
         entry["trace_key"] = trace_key
     return entry["raw"]
 
@@ -147,7 +137,7 @@ def result(entry: dict, svg: str, remove_background: bool) -> dict:
     match = difference(svg, reference(entry, remove_background))
     return {
         "svg": svg, "colors": entry["colors"], "match": round(match["delta"], 2),
-        "auto_layers": entry["raw"]["auto_layers"], **stats(svg),
+        "auto_layers": entry["raw"]["auto_layers"], "too_detailed": entry["raw"]["too_detailed"], **stats(svg),
     }
 
 
@@ -157,7 +147,7 @@ def convert(settings: Settings) -> dict:
     with gallery.priority():
         raw = get_trace(
             entry, settings.colors, settings.merge, settings.remove_background, settings.speckle,
-            settings.outlines, settings.shapes, settings.max_layers, settings.seed,
+            settings.outlines, settings.shapes, settings.max_layers, settings.seed, settings.separate,
         )
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)
@@ -165,29 +155,6 @@ def convert(settings: Settings) -> dict:
         settings.id, entry["name"], entry["reference"], entry["prepared"], svg, settings.model_dump(exclude={"id"}), entry["colors"]
     )
     return response
-
-
-@app.post("/api/recommend")
-def recommend(request: RecommendRequest) -> dict:
-    """Try several settings, compare each with the original and pick the simplest close one."""
-    entry = get_entry(request.id)
-    with gallery.priority():
-        mask = get_mask(entry, request.remove_background)
-        if not mask.any():
-            raise HTTPException(400, "the image has no visible pixels")
-        merge = choose_merge(entry["prepared"], mask, RECOMMENDED_COLORS)
-        raw = get_trace(
-            entry, RECOMMENDED_COLORS, merge, request.remove_background, request.speckle, request.outlines, request.shapes
-        )
-        svgs = {}
-
-        def render(detail: int) -> str:
-            svgs[detail] = finish(raw, entry["quantized"], detail, entry["size"])
-            return svgs[detail]
-
-        detail, _ = choose_detail(render, reference(entry, request.remove_background))
-        settings = {"colors": RECOMMENDED_COLORS, "merge": merge, "detail": detail, "speckle": request.speckle}
-        return {"settings": settings, **result(entry, svgs[detail], request.remove_background)}
 
 
 @app.get("/gallery")
