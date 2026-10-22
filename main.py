@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--keep-background", action="store_true", help="keep the background instead of making it transparent")
     parser.add_argument("--no-outlines", action="store_true", help="keep dark outlines as filled shapes instead of smooth strokes")
     parser.add_argument("--no-shapes", action="store_true", help="trace ellipses, circles and rectangles like any other shape")
+    parser.add_argument("--layers", action="store_true", help="separate into stacked layers (slower; needed for outlines and shapes)")
     parser.add_argument("--seed", type=int, default=0, help="another number gives another variant of the colors and layers")
     parser.add_argument(
         "--ai-upscale", action="store_true",
@@ -58,7 +59,10 @@ def main() -> None:
         flat, _ = quantize(prepare(image), settings["colors"], settings["merge"], settings["remove_background"], args.seed)
         size = (original.shape[1], original.shape[0])
         with open(output, "w", encoding="utf-8") as file:
-            file.write(vectorize(flat, settings["detail"], settings["speckle"], size, not args.no_outlines, not args.no_shapes))
+            file.write(vectorize(
+                flat, settings["detail"], settings["speckle"], size, not args.no_outlines, not args.no_shapes,
+                separate=args.layers,
+            ))
         print(f"SVG saved to {output}")
     except (ValueError, OSError) as error:
         sys.exit(f"Error: {error}")

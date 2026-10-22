@@ -13,8 +13,11 @@ from functools import partial
 import numpy as np
 
 SPACING = 2.0  # distance between resampled points, in traced pixels
+LONG_SPACING = 3.0  # on long edges, where a pixel more or less is not visible
+LONG_EDGE = 800  # edges longer than this many pixels count as long
 WINDOW = 3  # points on each side used to measure the turning angle
 SHARPNESS = 15  # degrees of turning at which the error tolerance and smoothing are halved
+SMALL_LOOP = 120  # edges with fewer pixel points get a quick smooth spline instead of the full fit
 RELATIVE_ERROR = 0.04  # tolerance never exceeds this share of a shape's size, so small shapes keep detail
 
 
@@ -47,12 +50,12 @@ def parse(d: str) -> list[np.ndarray]:
     return loops
 
 
-def resample(loop: np.ndarray) -> np.ndarray:
+def resample(loop: np.ndarray, spacing: float = SPACING) -> np.ndarray:
     """Evenly spaced points along a closed polyline."""
     closed = np.vstack([loop, loop[:1]])
     lengths = np.linalg.norm(np.diff(closed, axis=0), axis=1)
     distance = np.concatenate([[0], np.cumsum(lengths)])
-    count = max(8, int(distance[-1] / SPACING))
+    count = max(8, int(distance[-1] / spacing))
     targets = np.linspace(0, distance[-1], count, endpoint=False)
     return np.column_stack([np.interp(targets, distance, closed[:, k]) for k in range(2)])
 
@@ -156,7 +159,7 @@ def fit(points: np.ndarray, left: np.ndarray, right: np.ndarray, error: np.ndarr
         chord = np.linalg.norm(points[-1] - points[0]) / 3
         return [np.array([points[0], points[0] + left * chord, points[-1] + right * chord, points[-1]])]
     u = chord_params(points)
-    for _ in range(4):
+    for _ in range(2):  # more refinement passes barely save curves but cost a lot of time
         control = generate(points, u, left, right)
         ratio = np.sum((bezier(control, u[:, None]) - points) ** 2, axis=1) / error**2
         split = int(np.argmax(ratio))
@@ -170,8 +173,26 @@ def fit(points: np.ndarray, left: np.ndarray, right: np.ndarray, error: np.ndarr
     return fit(points[:split + 1], left, middle, error[:split + 1]) + fit(points[split:], -middle, right, error[split:])
 
 
-def refit_loop(loop: np.ndarray, error: float, corner_angle: float, sigma: float) -> list[np.ndarray]:
+def spline(loop: np.ndarray) -> list[np.ndarray]:
+    """Closed Catmull-Rom spline through a few evenly spaced points, as cubic Bezier curves.
+
+    Small shapes have no corners worth keeping, and this is many times faster than fitting.
+    """
     points = resample(loop)
+    points = smooth(points[::max(1, len(points) // max(4, len(points) // 3))], 1.0, closed=True)
+    before, after, after2 = np.roll(points, 1, axis=0), np.roll(points, -1, axis=0), np.roll(points, -2, axis=0)
+    first = points + (after - before) / 6
+    second = after - (after2 - points) / 6
+    return [np.array(c) for c in zip(points, first, second, after)]
+
+
+def refit_loop(loop: np.ndarray, error: float, corner_angle: float, sigma: float) -> list[np.ndarray]:
+    if len(loop) < SMALL_LOOP:
+        return spline(loop)
+    # Long edges are sampled less densely (much less work); the smoothing stays the same in pixels.
+    spacing = LONG_SPACING if len(loop) > LONG_EDGE else SPACING
+    sigma *= SPACING / spacing
+    points = resample(loop, spacing)
     turn = turning(points)
     # Sharp parts get less smoothing and a tighter fit (more points); gentle curves get fewer points.
     keep = (turn / SHARPNESS / (1 + turn / SHARPNESS))[:, None]
@@ -214,6 +235,10 @@ def pool() -> ProcessPoolExecutor:
     """Worker processes shared by all calls; started on first use."""
     global _pool
     if _pool is None:
+        # One math thread per worker: the workers already use all cores, more threads only compete.
+        # The workers are started fresh, so they read these settings when they import numpy.
+        for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+            os.environ.setdefault(name, "1")
         _pool = ProcessPoolExecutor(max_workers=os.cpu_count())
     return _pool
 

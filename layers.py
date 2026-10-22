@@ -19,39 +19,39 @@ FRINGE_WIDTH = 12  # anti-aliasing fringes are thinner than this (in traced pixe
 FRINGE_AREA = 20000  # ... and smaller than this
 FRINGE_NEIGHBOR = 5  # ... and lie between two areas at least this many times bigger
 FRINGE_BLEND = 10  # ... with a color within this ΔE of a blend of those two
-MAX_REGIONS = 1000  # images with more areas than this (busy photos) take too long to split into layers
+MAX_REGIONS = 1500  # more areas than this make layering very slow (photos): the smallest are merged first
+MAX_LAYER_AREAS = 1000  # pictures with more areas than this (busy photos) stay one layer
 
 
-def count_regions(image: np.ndarray, speckle: int) -> int:
+def layer_areas(image: np.ndarray, speckle: int) -> int:
     """About how many layers `build` would make: the areas of one color bigger than a speck."""
     min_area = (speckle * UPSCALE) ** 2
     return sum(int((boxes[1:, 4] >= min_area).sum()) for _, _, boxes in components(image, image[:, :, 3] == 255))
 
 
-def check_complexity(image: np.ndarray, speckle: int) -> None:
-    """Refuse images that would give too many layers, before any of the slow steps run."""
-    count = count_regions(image, speckle)
-    if count > MAX_REGIONS:
-        raise ValueError(
-            f"the image is too detailed to split into layers ({count} areas, at most {MAX_REGIONS}); "
-            "try fewer colors or remove bigger specks"
-        )
+def can_layer(image: np.ndarray, speckle: int) -> bool:
+    """Whether the picture can be split into layers in reasonable time (checked before any slow step)."""
+    return layer_areas(image, speckle) <= MAX_LAYER_AREAS
 
 
-def regions(image: np.ndarray, speckle: int) -> tuple[np.ndarray, list[dict]]:
-    """Connected areas of one color, with specks given to their neighbors first.
+def clean(image: np.ndarray, speckle: int) -> np.ndarray:
+    """Prepare a flat-color image for layering: specks and anti-aliasing fringes go to their neighbors.
+
+    Done once before the layers are built (also when they are rebuilt to reach a layer count).
+    """
+    opaque = image[:, :, 3] == 255
+    image = remove_specks(image, (speckle * UPSCALE) ** 2 if speckle > 0 else 0)
+    # Photos break into thousands of small areas; merge the smallest until layering stays quick.
+    image = reduce_regions(image, MAX_REGIONS, (speckle * UPSCALE) ** 2)
+    return merge_fringes(image, opaque)
+
+
+def regions(image: np.ndarray) -> tuple[np.ndarray, list[dict]]:
+    """Connected areas of one color (of an image prepared with `clean`).
 
     Returns an id map (-1 for transparent) and the areas, biggest first.
     """
     opaque = image[:, :, 3] == 255
-    if speckle > 0:
-        min_area = (speckle * UPSCALE) ** 2
-        specks = np.zeros(opaque.shape, bool)
-        for color, ids, boxes in components(image, opaque):
-            specks |= (boxes[:, 4] < min_area)[ids] & (ids > 0)
-        if specks.any():
-            image = merge_specks(image, specks)
-    image = merge_fringes(image, opaque)
     ids_map = np.full(opaque.shape, -1, np.int32)
     found = []
     for color, ids, boxes in components(image, opaque):
@@ -64,6 +64,89 @@ def regions(image: np.ndarray, speckle: int) -> tuple[np.ndarray, list[dict]]:
     rank[order] = np.arange(len(found))
     ranked = np.where(ids_map >= 0, rank[np.maximum(ids_map, 0)], -1)
     return ranked, [found[i] for i in order]
+
+
+def count_regions(image: np.ndarray, opaque: np.ndarray) -> int:
+    return sum(len(boxes) - 1 for _, _, boxes in components(image, opaque))
+
+
+def reduce_colors(image: np.ndarray, limit: int) -> np.ndarray:
+    """Merge colors until at most `limit` are left, each time the one whose loss changes least
+    (its pixel count times the difference to the most similar other color)."""
+    opaque = image[:, :, 3] == 255
+    bgr = np.ascontiguousarray(image[:, :, :3])
+    packed = (bgr[:, :, 0].astype(np.int64) << 16) | (bgr[:, :, 1].astype(np.int64) << 8) | bgr[:, :, 2]
+    colors, inverse, counts = np.unique(packed[opaque], return_inverse=True, return_counts=True)
+    if len(colors) <= limit:
+        return image
+    rgb = np.stack([(colors >> 16) & 255, (colors >> 8) & 255, colors & 255], axis=1).astype(np.uint8)
+    lab = to_lab(rgb.reshape(1, -1, 3))[0]
+    target = np.arange(len(colors))  # where each color ends up
+    alive = list(range(len(colors)))
+    counts = counts.astype(float)
+    while len(alive) > limit:
+        sub = lab[alive]
+        distance = np.linalg.norm(sub[:, None] - sub[None, :], axis=2)
+        np.fill_diagonal(distance, np.inf)
+        nearest = distance.argmin(axis=1)
+        cost = counts[alive] * distance[np.arange(len(alive)), nearest]
+        i = int(cost.argmin())
+        gone, into = alive[i], alive[nearest[i]]
+        counts[into] += counts[gone]
+        target[target == gone] = into
+        alive.pop(i)
+    result = image.copy()
+    result[opaque, :3] = rgb[target[inverse]]
+    return result
+
+
+def reduce_regions(image: np.ndarray, limit: int, min_area: int = 0) -> np.ndarray:
+    """Merge the smallest areas into their neighbors until at most `limit` are left (roughly)."""
+    opaque = image[:, :, 3] == 255
+    min_area = max(min_area, 16)
+    while count_regions(image, opaque) > limit and min_area < image.shape[0] * image.shape[1]:
+        min_area *= 2
+        image = remove_specks(image, min_area)
+    return image
+
+
+def remove_specks(image: np.ndarray, min_area: int) -> np.ndarray:
+    """Give areas smaller than `min_area` pixels to their most similar neighbor color."""
+    if min_area <= 0:
+        return image
+    opaque = image[:, :, 3] == 255
+    specks = np.zeros(opaque.shape, bool)
+    for _, ids, boxes in components(image, opaque):
+        specks |= (boxes[:, 4] < min_area)[ids] & (ids > 0)
+    return merge_specks(image, specks) if specks.any() else image
+
+
+def flat(image: np.ndarray, speckle: int) -> list[dict]:
+    """All colors as one layer, fast: each color traced once over the whole image.
+
+    Colors are drawn from the biggest area to the smallest, and each reaches OVERLAP pixels under
+    the colors drawn after it, so no gaps open between them. There is no per-area work, so even
+    photos with thousands of areas take only a few seconds.
+    """
+    image = remove_specks(image, (speckle * UPSCALE) ** 2 if speckle > 0 else 0)
+    opaque = image[:, :, 3] == 255
+    bgr = np.ascontiguousarray(image[:, :, :3])
+    packed = (bgr[:, :, 0].astype(np.int32) << 16) | (bgr[:, :, 1].astype(np.int32) << 8) | bgr[:, :, 2]
+    packed[~opaque] = -1
+    colors, counts = np.unique(packed[opaque], return_counts=True)
+    order = colors[np.argsort(-counts, kind="stable")]
+    later = opaque.copy()  # pixels of the colors not drawn yet
+    kernel = np.ones((2 * OVERLAP + 1, 2 * OVERLAP + 1), np.uint8)
+    items = []
+    for color in order:
+        mask = packed == color
+        later &= ~mask
+        shape = mask | ((cv2.dilate(mask.astype(np.uint8), kernel) > 0) & later)
+        found, _ = cv2.findContours(shape.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        loops = [c[:, 0].astype(float) + 0.5 for c in found if len(c) >= 8]
+        if loops:
+            items.append({"color": [(color >> 16) & 255, (color >> 8) & 255, color & 255], "loops": loops})
+    return items
 
 
 def merge_fringes(image: np.ndarray, opaque: np.ndarray) -> np.ndarray:
@@ -165,15 +248,15 @@ def close(mask: np.ndarray, radius: int) -> np.ndarray:
     return cv2.resize(closed, mask.shape[::-1], interpolation=cv2.INTER_NEAREST) > 0
 
 
-def build(image: np.ndarray, over: np.ndarray | None = None, speckle: int = 4) -> list[dict]:
-    """Layers from bottom (biggest) to top (smallest).
+def build(image: np.ndarray, over: np.ndarray | None = None) -> list[dict]:
+    """Layers from bottom (biggest) to top (smallest), for an image prepared with `clean`.
 
     `over` marks pixels covered by something drawn above all layers (the outlines), so layers
     may extend under them too. Each layer has its color, its position (x, y), its own pixels
     (`region`), the pixels it may cover because later layers hide them (`free`), and the filled-in
     shape to draw (`shape`), all cropped to the layer's box.
     """
-    ranked, found = regions(image, speckle)
+    ranked, found = regions(image)
     if over is not None:
         ranked = np.where(over & (ranked >= 0), len(found), ranked)  # outlines count as the very last layer
     layers = []

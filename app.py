@@ -15,12 +15,11 @@ import gallery
 import upscale
 from preprocess import decode, foreground, prepare, quantize, resize
 from presets import PRESETS, detect
-from quality import choose_detail, choose_merge, difference
+from quality import difference
 from vectorize import Traced, finish, stats, trace
 
 STATIC = Path(__file__).parent / "static"
 MAX_IMAGES = 8
-RECOMMENDED_COLORS = 32  # upper limit; the recommended merge decides how many are left
 
 
 @asynccontextmanager
@@ -150,6 +149,7 @@ def get_trace(
     shapes: bool,
     max_layers: int | None = None,
     seed: int = 0,
+    separate: bool = False,
 ) -> Traced:
     """Quantize and trace, reusing the cached results when the settings did not change."""
     key = (colors, merge, remove_background, seed)
@@ -159,12 +159,9 @@ def get_trace(
         except ValueError as error:
             raise HTTPException(400, str(error))
         entry["key"] = key
-    trace_key = (key, speckle, outlines, shapes, max_layers)
+    trace_key = (key, speckle, outlines, shapes, max_layers, separate)
     if entry["trace_key"] != trace_key:
-        try:
-            entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers)
-        except ValueError as error:
-            raise HTTPException(400, str(error))
+        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers, separate)
         entry["trace_key"] = trace_key
     return entry["raw"]
 
@@ -185,7 +182,7 @@ def convert(settings: Settings) -> dict:
         use_ai_upscale(entry, settings.ai_upscale)
         raw = get_trace(
             entry, settings.colors, settings.merge, settings.remove_background, settings.speckle,
-            settings.outlines, settings.shapes, settings.max_layers, settings.seed,
+            settings.outlines, settings.shapes, settings.max_layers, settings.seed, settings.separate,
         )
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)

@@ -1,21 +1,14 @@
-"""Measure how closely an SVG matches the original image, and recommend settings."""
+"""Measure how closely an SVG matches the original image."""
 
 import re
-from typing import Callable
 
 import cv2
 import numpy as np
 
 from curves import parse
-from preprocess import assign, merge_colors, palette, to_lab
+from preprocess import to_lab
 
-# Above ΔE 12 small but clearly different details (white marks on cream) would be merged away.
-MERGE_STEPS = (3, 5, 8, 10, 12)
-MERGE_COST = 1.0  # extra mean ΔE we accept for merging more colors
-DETAIL_STEPS = (2, 4, 6)
-DETAIL_COST = 0.1  # extra share of wrong pixels (in %) we accept for fewer Bezier points
 WRONG = 10  # a pixel this many ΔE away from the original counts as clearly wrong
-SAMPLE_SIZE = 100000
 
 
 def number(tag: str, name: str) -> float:
@@ -72,26 +65,3 @@ def difference(svg: str, reference: np.ndarray) -> dict[str, float]:
     drawn = to_lab(on_white(rasterize(svg, width, height)))
     distance = np.linalg.norm(drawn - to_lab(on_white(reference)), axis=2)
     return {"delta": float(distance.mean()), "wrong": float(100 * np.mean(distance > WRONG))}
-
-
-def choose_merge(prepared: np.ndarray, mask: np.ndarray, colors: int) -> float:
-    """The strongest color merge that keeps the colors within MERGE_COST of the finest merge."""
-    lab = to_lab(prepared)[mask]
-    rng = np.random.default_rng(0)
-    lab = lab[rng.choice(len(lab), min(SAMPLE_SIZE, len(lab)), replace=False)]
-    centers, counts = palette(lab, colors)
-    pixels = lab.reshape(-1, 1, 3)
-    errors = []
-    for merge in MERGE_STEPS:
-        merged = merge_colors(centers, counts, merge)
-        labels = assign(pixels, merged).ravel()
-        errors.append(float(np.mean(np.linalg.norm(lab - merged[labels], axis=1))))
-    best = min(errors)
-    return max(m for m, e in zip(MERGE_STEPS, errors) if e <= best + MERGE_COST)
-
-
-def choose_detail(render: Callable[[int], str], reference: np.ndarray) -> tuple[int, dict[int, float]]:
-    """The lowest detail whose share of wrong pixels is within DETAIL_COST of the closest one."""
-    scores = {detail: difference(render(detail), reference)["wrong"] for detail in DETAIL_STEPS}
-    best = min(scores.values())
-    return min(d for d, score in scores.items() if score <= best + DETAIL_COST), scores

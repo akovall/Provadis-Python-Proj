@@ -58,6 +58,8 @@
     width: 100%; margin-top: 8px; padding: 7px; font-weight: 600;
   }
   button.secondary span { color: var(--muted); font-weight: 400; }
+  .layer-options { display: flex; flex-direction: column; gap: 20px; padding-left: 12px; border-left: 2px solid var(--accent); }
+  .layer-options[hidden] { display: none; }
   .stat.wide { grid-column: span 2; }
   main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .empty { color: var(--muted); }
@@ -130,8 +132,6 @@
     <span id="dropText">Drop a PNG or JPG here, or click to choose</span>
   </label>
 
-  <button id="recommend" disabled title="Tries several settings on this image, compares each with the original and picks the simplest one that still matches closely">★ Recommended for this image</button>
-
   <div class="control">
     <label>Preset</label>
     <div class="presets">
@@ -146,13 +146,6 @@
     <label for="detail">Curve detail <output id="detailOut"></output></label>
     <input type="range" id="detail" min="1" max="10" value="4">
     <small>Lower values use fewer Bezier points and give smoother curves.</small>
-  </div>
-
-  <div class="control">
-    <label for="layers">Layers <output id="layersOut">–</output></label>
-    <input type="range" id="layers" min="2" max="2" value="2" disabled>
-    <small>Fewer layers: the least important ones blend into their surroundings (result within ±3).</small>
-    <button class="secondary" id="regenerate" disabled title="Same settings, another variant of the colors and layers">↻ Regenerate layers <span id="variant"></span></button>
   </div>
 
   <div class="control">
@@ -178,6 +171,19 @@
   </div>
 
   <div class="control">
+    <button class="secondary" id="separate" disabled>Separate into layers</button>
+    <small id="separateHint">All colors are one layer now (fast). Separating stacks the shapes from big to small, so you can hide layers and set how many there are.</small>
+  </div>
+
+  <div class="layer-options" id="layerOptions" hidden>
+  <div class="control">
+    <label for="layers">Layers <output id="layersOut">–</output></label>
+    <input type="range" id="layers" min="2" max="60" value="15">
+    <small>Starts at 15. Fewer layers: the least important ones blend into their surroundings (result within ±3). All the way right keeps every layer, which can be slow for big pictures.</small>
+    <button class="secondary" id="regenerate" disabled title="Same settings, another variant of the colors and layers">↻ Regenerate layers <span id="variant"></span></button>
+  </div>
+
+  <div class="control">
     <label class="check"><input type="checkbox" id="outlines" checked> Smooth outlines</label>
     <small>Finds dark contour lines and redraws them smoothly, keeping their thickness from the original.</small>
   </div>
@@ -185,6 +191,7 @@
   <div class="control">
     <label class="check"><input type="checkbox" id="shapes" checked> Detect simple shapes</label>
     <small>Areas that are ellipses, circles or rectangles become exact SVG shapes.</small>
+  </div>
   </div>
 
   <div class="control">
@@ -231,7 +238,7 @@ const $ = (id) => document.getElementById(id);
 const sliders = ["detail", "merge", "colors", "speckle"];
 let imageId = null, fileName = "image", svgText = "", vectorUrl = null;
 let timer = null, running = false, pending = false;
-let svgDoc = null, layersTouched = false, seed = 0;
+let svgDoc = null, seed = 0, separate = false;
 
 const viewer = createCompare($("compare"), () => {
   const main = $("main"), padding = parseFloat(getComputedStyle(main).paddingLeft) * 2;
@@ -293,6 +300,8 @@ async function run() {
   body.outlines = $("outlines").checked;
   body.shapes = $("shapes").checked;
   body.seed = seed;
+  body.separate = separate;
+  $("busyText").textContent = separate ? "Separating into layers…" : "Vectorizing…";
   const layers = $("layers");
   body.max_layers = layersTouched && Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;
   body.ai_upscale = $("ai").checked;
@@ -317,12 +326,12 @@ function showResult(data) {
   svgDoc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   showVector();
   buildLayerList();
-  const layers = $("layers");
-  layers.disabled = false;
-  layers.max = data.auto_layers;
-  if (!layersTouched) layers.value = data.auto_layers;
-  showLayersValue();
   $("statLayers").textContent = data.layers;
+  if (data.too_detailed) {
+    setSeparate(false);
+    $("separateHint").textContent =
+      "This picture is too detailed to split into layers (for example a photo), so it stays one layer.";
+  }
   $("statColors").textContent = data.colors;
   $("statPaths").textContent = data.paths.toLocaleString();
   $("statCurves").textContent = data.curves.toLocaleString();
@@ -385,10 +394,10 @@ function buildLayerList() {
 function showLayersValue() {
   const layers = $("layers");
   const all = Number(layers.value) >= Number(layers.max);
-  $("layersOut").textContent = all ? "all (" + layers.max + ")" : "≈ " + layers.value;
+  $("layersOut").textContent = all ? "all" : "≈ " + layers.value;
 }
 
-$("layers").addEventListener("input", () => { layersTouched = true; showLayersValue(); schedule(); });
+$("layers").addEventListener("input", () => { showLayersValue(); schedule(); });
 
 $("regenerate").addEventListener("click", () => {
   seed += 1;
@@ -396,11 +405,15 @@ $("regenerate").addEventListener("click", () => {
   schedule();
 });
 
-function applySettings(settings) {
-  for (const [name, value] of Object.entries(settings)) {
-    $(name).value = value;
-    $(name + "Out").textContent = $(name).value;
-  }
+function setSeparate(on) {
+  separate = on;
+  $("layers").value = 15;  // a quick start; move the slider for more or fewer layers
+  showLayersValue();
+  $("separate").textContent = on ? "Merge into one layer" : "Separate into layers";
+  $("separateHint").textContent = on
+    ? "Layers are stacked from big to small. Big pictures are simplified first so this stays quick."
+    : "All colors are one layer now (fast). Separating stacks the shapes from big to small, so you can hide layers and set how many there are.";
+  $("layerOptions").hidden = !on;
 }
 
 $("recommend").addEventListener("click", async () => {
@@ -433,8 +446,8 @@ $("recommend").addEventListener("click", async () => {
   }
 });
 
-function enableRecommend(on) {
-  $("recommend").disabled = !on;
+function enableButtons(on) {
+  $("separate").disabled = !on;
   $("regenerate").disabled = !on;
 }
 
@@ -442,13 +455,13 @@ async function upload(file) {
   if (!file) return;
   fileName = file.name.replace(/\.[^.]+$/, "");
   imageId = null;
-  layersTouched = false;
   seed = 0;
   $("variant").textContent = "";
+  setSeparate(false);
   $("layerList").innerHTML = "";
   $("layerCount").textContent = "";
   $("layersEmpty").style.display = "block";
-  enableRecommend(false);
+  enableButtons(false);
   $("dropText").textContent = file.name;
   $("error").textContent = "";
   $("busy").classList.add("on");

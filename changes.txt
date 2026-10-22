@@ -148,6 +148,23 @@ Layers panel, combined layers and layer count (round 8)
   CLI: --seed N.
 
 
+One layer by default, layers on request (round 9)
+- New default: all colors in one layer. Each color is traced once over the whole picture, so it is
+  quick even for big photos (drawings 2-5 s, photos 9-13 s).
+- "Separate into layers" builds the stacked layers, starting at 15. Only then the Layers slider,
+  Regenerate, Smooth outlines and Detect simple shapes appear. All the way right keeps every layer.
+- Pictures too detailed for layers (more than 1000 areas bigger than a speck, e.g. busy photos)
+  stay one layer, and the page says so (uses the teammate's area count instead of an error).
+- "Recommended for this image" removed (button, endpoint and helper code).
+- The gallery uses the fast one-layer mode, so it no longer blocks the server at startup
+  (a photo layered in the background had made the server 4.7 GB big and the mushroom take 135 s).
+- Faster: with a layer target, colors and areas are cut down first (cheap) instead of building
+  every layer and removing most of them; the image cleanup runs once instead of in every rebuild;
+  small edges get a quick spline; fewer refinement passes in curve fitting; one math thread per
+  worker process. Separating with 15 layers: mushroom 6.5 s, dino 15 s (was 24 s), OIP 10 s (was 28 s).
+- CLI: --layers to separate (default is one layer).
+
+
 THINGS TO KNOW
 ==============
 
@@ -159,8 +176,7 @@ THINGS TO KNOW
   color close to the background, that part can be removed too. Use --keep-background then.
 - Recommended does not change "Remove background", "Remove specks", "Smooth outlines" or
   "Detect simple shapes"; set those first.
-- The Layers slider takes about 10-15 s below the automatic count (the layers are rebuilt up
-  to 5 times). Very low counts lose details that matter to people: at 5 layers the mushroom
+- Separating takes 5-15 s for drawings; very low layer counts lose details that matter to people. Very low counts lose details that matter to people: at 5 layers the mushroom
   loses its eyes and the panda its pupils, because the choice only looks at area and color.
 - The panel's thumbnails of very light layers (white, faint lines) are hard to see on the
   checkerboard.
