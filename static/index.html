@@ -303,7 +303,7 @@ async function run() {
   body.separate = separate;
   $("busyText").textContent = separate ? "Separating into layers…" : "Vectorizing…";
   const layers = $("layers");
-  body.max_layers = Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;  // all the way right: every layer
+  body.max_layers = separate && Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;
   body.ai_upscale = $("ai").checked;
   try {
     const response = await fetch("/api/vectorize", {
@@ -416,35 +416,7 @@ function setSeparate(on) {
   $("layerOptions").hidden = !on;
 }
 
-$("recommend").addEventListener("click", async () => {
-  if (!imageId || running) return;
-  running = true;
-  $("busyText").textContent = "Comparing settings with the original…";
-  $("busy").classList.add("on");
-  $("error").textContent = "";
-  try {
-    const response = await fetch("/api/recommend", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: imageId, speckle: Number($("speckle").value),
-        remove_background: $("background").checked, outlines: $("outlines").checked, shapes: $("shapes").checked,
-        ai_upscale: $("ai").checked,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "recommendation failed");
-    applySettings(data.settings);
-    markPreset(null);
-    showResult(data);
-  } catch (error) {
-    $("error").textContent = error.message;
-  } finally {
-    running = false;
-    $("busy").classList.remove("on");
-    $("busyText").textContent = "Vectorizing…";
-    if (pending) { pending = false; run(); }
-  }
-});
+$("separate").addEventListener("click", () => { setSeparate(!separate); schedule(); });
 
 function enableButtons(on) {
   $("separate").disabled = !on;
