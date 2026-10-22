@@ -1,16 +1,21 @@
-"""Refit traced outlines with as few cubic Bezier curves as possible.
+"""Fit shape edges with as few cubic Bezier curves as possible.
 
-vtracer splits outlines into many short segments. Here every outline is sampled into
-a dense polyline, real corners are detected, the parts between corners are smoothed
-and then refitted with Schneider's curve-fitting algorithm (Graphics Gems, 1990).
+Every edge is sampled into a dense polyline, real corners are detected (they stay sharp),
+the parts between corners are smoothed and then fitted with Schneider's curve-fitting
+algorithm (Graphics Gems, 1990).
 """
 
+import os
 import re
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 import numpy as np
 
-SPACING = 1.5  # distance between resampled points, in traced pixels
-WINDOW = 4  # points on each side used to measure the turning angle
+SPACING = 2.0  # distance between resampled points, in traced pixels
+WINDOW = 3  # points on each side used to measure the turning angle
+SHARPNESS = 15  # degrees of turning at which the error tolerance and smoothing are halved
+RELATIVE_ERROR = 0.04  # tolerance never exceeds this share of a shape's size, so small shapes keep detail
 
 
 def parse(d: str) -> list[np.ndarray]:
@@ -52,17 +57,21 @@ def resample(loop: np.ndarray) -> np.ndarray:
     return np.column_stack([np.interp(targets, distance, closed[:, k]) for k in range(2)])
 
 
-def corners(points: np.ndarray, angle: float) -> list[int]:
-    """Indices where the outline turns sharper than `angle` degrees."""
+def turning(points: np.ndarray) -> np.ndarray:
+    """How many degrees the closed outline turns around each point."""
     before = points - np.roll(points, WINDOW, axis=0)
     after = np.roll(points, -WINDOW, axis=0) - points
     cos = np.sum(before * after, axis=1) / (np.linalg.norm(before, axis=1) * np.linalg.norm(after, axis=1) + 1e-9)
-    turn = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+    return np.degrees(np.arccos(np.clip(cos, -1, 1)))
+
+
+def corners(turn: np.ndarray, angle: float) -> list[int]:
+    """Indices where the outline turns sharper than `angle` degrees."""
     result = []
     for i in np.argsort(-turn):
         if turn[i] < angle:
             break
-        if all(min(abs(i - j), len(points) - abs(i - j)) > 2 * WINDOW for j in result):
+        if all(min(abs(i - j), len(turn) - abs(i - j)) > 2 * WINDOW for j in result):
             result.append(int(i))
     return sorted(result)
 
@@ -76,7 +85,7 @@ def smooth(points: np.ndarray, sigma: float, closed: bool) -> np.ndarray:
     kernel /= kernel.sum()
     mode = "wrap" if closed else "edge"
     padded = np.pad(points, ((radius, radius), (0, 0)), mode=mode)
-    result = np.column_stack([np.convolve(padded[:, k], kernel, mode="valid") for k in range(2)])
+    result = np.column_stack([np.convolve(padded[:, k], kernel, mode="valid") for k in range(points.shape[1])])
     if not closed:
         result[0], result[-1] = points[0], points[-1]
     return result
@@ -138,42 +147,52 @@ def reparameterize(control: np.ndarray, points: np.ndarray, u: np.ndarray) -> np
     return np.clip(u - step, 0, 1)
 
 
-def fit(points: np.ndarray, left: np.ndarray, right: np.ndarray, error: float) -> list[np.ndarray]:
-    """Fit one piece with cubic curves, splitting where the error is largest."""
+def fit(points: np.ndarray, left: np.ndarray, right: np.ndarray, error: np.ndarray) -> list[np.ndarray]:
+    """Fit one piece with cubic curves, splitting where the error is largest.
+
+    `error` is the allowed distance for each point, so sharp parts can get a tighter fit.
+    """
     if len(points) < 3:
         chord = np.linalg.norm(points[-1] - points[0]) / 3
         return [np.array([points[0], points[0] + left * chord, points[-1] + right * chord, points[-1]])]
     u = chord_params(points)
-    for _ in range(5):
+    for _ in range(4):
         control = generate(points, u, left, right)
-        distances = np.sum((bezier(control, u[:, None]) - points) ** 2, axis=1)
-        split = int(np.argmax(distances))
-        if distances[split] <= error**2:
+        ratio = np.sum((bezier(control, u[:, None]) - points) ** 2, axis=1) / error**2
+        split = int(np.argmax(ratio))
+        if ratio[split] <= 1:
             return [control]
-        if distances[split] > (4 * error) ** 2:
+        if ratio[split] > 16:
             break
         u = reparameterize(control, points, u)
     split = min(max(split, 1), len(points) - 2)
     middle = unit(points[split - 1] - points[split + 1])
-    return fit(points[:split + 1], left, middle, error) + fit(points[split:], -middle, right, error)
+    return fit(points[:split + 1], left, middle, error[:split + 1]) + fit(points[split:], -middle, right, error[split:])
 
 
 def refit_loop(loop: np.ndarray, error: float, corner_angle: float, sigma: float) -> list[np.ndarray]:
     points = resample(loop)
-    found = corners(points, corner_angle)
+    turn = turning(points)
+    # Sharp parts get less smoothing and a tighter fit (more points); gentle curves get fewer points.
+    keep = (turn / SHARPNESS / (1 + turn / SHARPNESS))[:, None]
+    size = np.min(points.max(axis=0) - points.min(axis=0))
+    tolerance = np.minimum(error / (1 + turn / SHARPNESS), max(0.5, RELATIVE_ERROR * size))
+    found = corners(turn, corner_angle)
     if not found:
-        points = smooth(points, sigma, closed=True)
+        points = keep * points + (1 - keep) * smooth(points, sigma, closed=True)
         # Start at an arbitrary point with the same tangent on both sides so the joint is smooth.
         tangent = unit(points[1] - points[-1])
         closed = np.vstack([points, points[:1]])
-        return fit(closed, tangent, -tangent, error)
-    points = np.roll(points, -found[0], axis=0)
+        return fit(closed, tangent, -tangent, np.append(tolerance, tolerance[0]))
+    points, keep, tolerance = (np.roll(a, -found[0], axis=0) for a in (points, keep, tolerance))
     cuts = [c - found[0] for c in found] + [len(points)]
     closed = np.vstack([points, points[:1]])
+    keep, tolerance = np.vstack([keep, keep[:1]]), np.append(tolerance, tolerance[0])
     curves = []
     for start, end in zip(cuts, cuts[1:]):
-        piece = smooth(closed[start:end + 1], sigma, closed=False)
-        curves += fit(piece, end_tangent(piece), end_tangent(piece, reverse=True), error)
+        piece = closed[start:end + 1]
+        piece = keep[start:end + 1] * piece + (1 - keep[start:end + 1]) * smooth(piece, sigma, closed=False)
+        curves += fit(piece, end_tangent(piece), end_tangent(piece, reverse=True), tolerance[start:end + 1])
     return curves
 
 
@@ -188,10 +207,28 @@ def to_path(loops: list[list[np.ndarray]]) -> str:
     return "".join(parts)
 
 
-def refit(svg: str, error: float, corner_angle: float, sigma: float) -> str:
-    """Replace every path's outline with a smoother one that has fewer Bezier points."""
-    def replace(match: re.Match) -> str:
-        loops = [refit_loop(loop, error, corner_angle, sigma) for loop in parse(match.group(1))]
-        return f'd="{to_path(loops)}"' if loops else match.group(0)
+_pool: ProcessPoolExecutor | None = None
 
-    return re.sub(r'd="([^"]*)"', replace, svg)
+
+def pool() -> ProcessPoolExecutor:
+    """Worker processes shared by all calls; started on first use."""
+    global _pool
+    if _pool is None:
+        _pool = ProcessPoolExecutor(max_workers=os.cpu_count())
+    return _pool
+
+
+def refit_loops(loops: list[np.ndarray], error: float, corner_angle: float, sigma: float) -> str:
+    """Smooth path data for one shape given as pixel-edge loops (outer edges and holes)."""
+    return to_path([refit_loop(loop, error, corner_angle, sigma) for loop in loops])
+
+
+def refit_all(shapes: list[list[np.ndarray]], error: float, corner_angle: float, sigma: float) -> list[str]:
+    """Path data for many shapes; they are independent, so they are fitted in parallel on all CPU cores."""
+    work = partial(refit_loops, error=error, corner_angle=corner_angle, sigma=sigma)
+    if len(shapes) <= 8:
+        return [work(loops) for loops in shapes]
+    # Start the biggest shapes first so no worker is left with a big one at the end.
+    order = sorted(range(len(shapes)), key=lambda i: -sum(len(loop) for loop in shapes[i]))
+    futures = {i: pool().submit(work, shapes[i]) for i in order}
+    return [futures[i].result() for i in range(len(shapes))]

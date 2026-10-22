@@ -88,7 +88,8 @@ def thumbnail(image: np.ndarray) -> bytes:
 
 
 def preset_name(settings: dict) -> str:
-    return next((name for name, values in PRESETS.items() if values == settings), "custom")
+    # Only the preset's own values count; the converter also sends outlines, shapes, layers and seed.
+    return next((name for name, values in PRESETS.items() if all(settings.get(k) == v for k, v in values.items())), "custom")
 
 
 def new_tile(tile_id: str, name: str, source: str) -> dict:

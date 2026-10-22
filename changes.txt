@@ -48,13 +48,129 @@ Transparent background (preprocess.py, round 3)
   preview shows a checkerboard. CLI: --keep-background to turn it off.
 
 
+Sharp details and match with the original (round 4)
+- Sharp parts of an outline (tips, claws, small shapes) now get more Bezier points and less
+  smoothing; gentle curves still get few points.
+- Small images are enlarged to ~1024 px before processing, so thin lines (the white marks on
+  the panda's hands, its claws) are no longer smoothed away. The SVG keeps the original size.
+- Soft anti-aliased edges are sharpened (toggle filter) before choosing colors, so they do not
+  become extra bands of in-between colors. Faint lines (the mushroom cap lines) are kept.
+- Curve refitting runs on all CPU cores.
+- Tested by rendering each SVG and comparing it pixel by pixel with the original
+  (average color difference ΔE, lower is closer):
+    panda1.png   before 1.43 -> now about 1.2 (hand marks and claws kept)
+    mushroom.jpg before 6.6  -> now about 0.95 (with background kept)
+
+Presets and Recommended (quality.py, app.py, index.html)
+- Preset buttons: Logo / flat, Illustration, Detailed, Extra smooth.
+- "Recommended for this image": tries several settings, draws each SVG back into pixels,
+  compares it with the original and picks the simplest one that still matches closely.
+  Results: panda -> 8 colors, detail 2, match 1.29; mushroom -> 9 colors, detail 2, match 1.13.
+- New "Match with original" value under the stats (ΔE, under ~2 is hard to see).
+
+
+Smooth outlines (strokes.py, round 5)
+- Removed the four fixed presets (Logo, Illustration, Detailed, Extra smooth).
+  "Recommended for this image" and the Match value stay.
+- Outlines are found automatically: dark colors (Lab lightness < 50) whose shapes are long and
+  thin (at most 1.5% of the image size wide). They are reduced to a smooth centerline, and the
+  thickness is measured from the original at every point along it (smoothed, so it changes
+  gradually). Each line is drawn as a filled ribbon around the centerline, so a line that is
+  thicker in one part of the picture and thinner in another stays that way.
+  Thick parts attached to a line (the panda's nose on its mouth) stay filled shapes.
+  The pixels under the stroke go to the neighboring colors, so no wobbly edge shows.
+- Results: mushroom outline is smooth and thicker/thinner in the same places as the original
+  (match 0.94-1.01, about the same as without outlines); panda's mouth is one clean line that
+  thins toward its ends.
+- Web page: "Smooth outlines" checkbox (on by default). CLI: --no-outlines to turn it off.
+- Tried: pushing all anti-aliased pixels to the darker color. It made every dark area grow
+  (panda match 1.15 -> 1.83), so it was removed; the strokes measure the outline width instead.
+
+
+Simple shapes (shapes.py, round 6)
+- Areas of one color that are almost exactly an ellipse, circle or rectangle (at least 95%
+  overlap with the fitted shape, no holes) are drawn as real SVG <ellipse>, <circle> or <rect>
+  instead of traced paths: perfectly smooth, no Bezier points.
+- Second pass: a shape partly hidden behind one found before (a cheek behind an eye) is fitted
+  only on its visible edge and drawn as a full shape underneath.
+- Mushroom: both eyes and both cheeks become ellipses (match 1.12 -> 1.06).
+  Panda: nothing qualifies (its pupils and eye patches are not clean ellipses), so it is unchanged.
+- Web page: "Detect simple shapes" checkbox (on by default); the "Paths" stat is now "Shapes".
+  CLI: --no-shapes to turn it off.
+- Outlines now keep their original thickness (thicker and thinner parts), see round 5.
+
+
+Stacked layers instead of cut-out pieces (layers.py, round 7)
+- vtracer is gone. The image is split into layers, one per connected area of one color,
+  sorted from the biggest (bottom) to the smallest (top).
+- Layers are no longer cut out where smaller layers lie on them: holes and notches under the
+  layers on top are filled in. The face is one whole shape with the eyes on top; the panda's
+  body is one shape with the dark patches lying on it.
+- Each layer is first checked against simple forms (ellipse, circle, rectangle; only the visible
+  part has to match). All other layers get smooth Bezier curves with sharp corners kept where
+  the edge really turns.
+- Big to small is the rule, with one exception: a layer that becomes a simple form when a
+  neighboring form may lie on top of it moves just below that form. So the mushroom's cheeks are
+  ellipses lying under the eyes (as in the picture), although they are smaller than the eyes.
+- Outlines are drawn last, over everything, and the layers below extend under them.
+- Before layering, thin anti-aliasing fringes between two big areas are split between them,
+  and specks join the most similar neighbor color (so faint lines stay continuous).
+- Every layer reaches 4 px under the layers on top of it, so no gaps open between them.
+- Edge sharpening is lighter now (it made the panda's nose and pupils jagged).
+- Results: panda 52 layers (body, eye patches, cheeks and inner ears are ellipses), match 1.34;
+  mushroom 133 layers (background rectangle, eyes and cheeks ellipses), match 1.03;
+  pixel-art test.png unchanged by the forms (1.48 with, 1.47 without).
+  Converting is faster than with vtracer, and the detail slider takes about 1 s.
+
+
+Layers panel, combined layers and layer count (round 8)
+- Shapes of one color at the same depth share one layer: a shape joins an earlier layer of its
+  color when nothing drawn in between overlaps it. Mushroom: 145 shapes -> 18 layers (all the
+  faint cap lines of one color are one layer); panda: 52 shapes -> 17 layers.
+- Each layer is an SVG group (<g data-layer data-name data-box>), so other programs see the
+  layers too.
+- Web page: Layers panel next to the controls, like in Photoshop: top layer first, thumbnail
+  zoomed onto the layer, name ("Ellipses x2", "Shapes x9", "Outline") and shape count.
+  The eye button hides a layer; hidden layers are also left out of the download.
+- "Layers" slider: about how many layers the SVG should have. The least important layers
+  (area x color difference) are blended into their surroundings, or a whole color is merged
+  into the most similar one, until the count is within 3 of the slider.
+  Tested: target 12 -> panda 15 / mushroom 12, target 8 -> 11 / 10, target 5 -> 8 / 8.
+  Match stays close down to about 8 layers (panda 1.39, mushroom 1.09).
+- Tested in a real browser (Edge, driven by Playwright): upload, layers panel, hiding a layer
+  and the Layers slider all work. Playwright was only installed for the test and removed again.
+- The layers panel is on the right side of the preview (below it on narrow screens).
+- The same image now always gives the same colors and layers (k-means used a random start that
+  changed between uploads, e.g. 17 or 19 layers for the panda).
+- "Regenerate layers" button (under the Layers slider): same settings, another variant. Each
+  click starts the color search from another point, so the colors and layers come out a little
+  different (e.g. mushroom: 15, 15, 18 layers for variants 1-3). Variant numbers repeat exactly.
+  CLI: --seed N.
+
+
 THINGS TO KNOW
 ==============
 
-- Speed: a slider change takes about 1.5-4 s on the mushroom image, detail 10 is the slowest.
+- Speed: a slider change takes about 2-8 s (detail only: ~2 s), "Recommended" about 13 s.
+  Uploading takes a bit longer than before because of the extra edge sharpening.
 - At very low detail, thin lines (like the dark outline) can look a little thinner in places,
   because every color shape is smoothed on its own.
 - Background removal works from the border, so if the object touches the image edge with a
   color close to the background, that part can be removed too. Use --keep-background then.
-- The web page was tested through its API, not clicked through in a browser yet.
+- Recommended does not change "Remove background", "Remove specks", "Smooth outlines" or
+  "Detect simple shapes"; set those first.
+- The Layers slider takes about 10-15 s below the automatic count (the layers are rebuilt up
+  to 5 times). Very low counts lose details that matter to people: at 5 layers the mushroom
+  loses its eyes and the panda its pupils, because the choice only looks at area and color.
+- The panel's thumbnails of very light layers (white, faint lines) are hard to see on the
+  checkerboard.
+- Shapes with holes are skipped (anything inside the hole would be hidden under the shape).
+- The panda's nose and pupils still have small bumps; they come from its soft, blurry edges.
+- Exact ellipses are a little different from soft hand-drawn ovals, so the panda's match is a
+  bit higher with forms (1.34) than without (1.16). Untick "Detect simple shapes" if that matters.
+- Recommended is only on the web page, not in the command line.
+- Where two lines cross or meet, the thickness is capped at 2x the line's usual width so the
+  junction does not swell.
+- Very thin tapered line tips (under 4 px) stay filled shapes and can look a bit lighter.
+- Finding outlines adds about 2-4 s when the colors or specks change (not for the detail slider).
 - Nothing is committed yet.

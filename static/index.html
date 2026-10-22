@@ -18,7 +18,7 @@
   * { box-sizing: border-box; }
   body {
     margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--text); background: var(--bg);
-    display: grid; grid-template-columns: 300px 1fr; height: 100vh;
+    display: grid; grid-template-columns: 300px 1fr 250px; height: 100vh;
   }
   aside {
     background: var(--panel); border-right: 1px solid var(--border);
@@ -52,6 +52,12 @@
     border: 1px solid var(--border); border-radius: 6px;
   }
   select:disabled { opacity: .4; }
+  button.secondary {
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+    width: 100%; margin-top: 8px; padding: 7px; font-weight: 600;
+  }
+  button.secondary span { color: var(--muted); font-weight: 400; }
+  .stat.wide { grid-column: span 2; }
   main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .empty { color: var(--muted); }
   .compare { position: relative; overflow: hidden; display: none; user-select: none; touch-action: none; cursor: zoom-in; }
@@ -107,9 +113,37 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .error { color: #dc2626; }
-  @media (max-width: 700px) {
-    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+  .layers-panel {
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .layers-panel h2 {
+    font-size: 13px; margin: 0; padding: 14px 14px 10px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .layers-panel h2 span { color: var(--muted); font-weight: 500; }
+  .layer-list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; }
+  .layer-list li {
+    display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--border);
+  }
+  .layer-list li.hidden .thumb, .layer-list li.hidden .name { opacity: .35; }
+  .layer-list .eye {
+    background: none; color: var(--text); padding: 2px 4px; font-size: 14px; line-height: 1; width: 24px;
+  }
+  .layer-list li.hidden .eye { color: var(--muted); }
+  .layer-list .thumb {
+    width: 40px; height: 40px; flex: none; border: 1px solid var(--border); border-radius: 3px;
+    background: repeating-conic-gradient(#d6d3d1 0 25%, #ffffff 0 50%) 0 0 / 8px 8px;
+  }
+  .layer-list .thumb svg { width: 100%; height: 100%; display: block; }
+  .layer-list .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .layer-list .name small { display: block; color: var(--muted); font-size: 11px; }
+  .layers-empty { color: var(--muted); padding: 14px; font-size: 13px; }
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: auto; }
     aside { border-right: 0; border-bottom: 1px solid var(--border); }
+    .layers-panel { border-left: 0; border-top: 1px solid var(--border); }
+    .layer-list { max-height: 260px; }
     main { padding: 16px; }
   }
 </style>
@@ -126,6 +160,8 @@
     <span id="dropText">Drop a PNG or JPG here, or click to choose</span>
   </label>
 
+  <button id="recommend" disabled title="Tries several settings on this image, compares each with the original and picks the simplest one that still matches closely">★ Recommended for this image</button>
+
   <div class="control">
     <label>Preset</label>
     <div class="presets">
@@ -140,6 +176,13 @@
     <label for="detail">Curve detail <output id="detailOut"></output></label>
     <input type="range" id="detail" min="1" max="10" value="4">
     <small>Lower values use fewer Bezier points and give smoother curves.</small>
+  </div>
+
+  <div class="control">
+    <label for="layers">Layers <output id="layersOut">–</output></label>
+    <input type="range" id="layers" min="2" max="2" value="2" disabled>
+    <small>Fewer layers: the least important ones blend into their surroundings (result within ±3).</small>
+    <button class="secondary" id="regenerate" disabled title="Same settings, another variant of the colors and layers">↻ Regenerate layers <span id="variant"></span></button>
   </div>
 
   <div class="control">
@@ -164,14 +207,29 @@
     <small>Makes the background around the object transparent. Same-colored areas inside the object stay.</small>
   </div>
 
-  <div class="stats">
-    <div class="stat"><span>Colors</span><b id="statColors">–</b></div>
-    <div class="stat"><span>Paths</span><b id="statPaths">–</b></div>
-    <div class="stat"><span>Curves</span><b id="statCurves">–</b></div>
-    <div class="stat"><span>Size</span><b id="statSize">–</b></div>
+  <div class="control">
+    <label class="check"><input type="checkbox" id="outlines" checked> Smooth outlines</label>
+    <small>Finds dark contour lines and redraws them smoothly, keeping their thickness from the original.</small>
   </div>
 
-  <button id="download" disabled>Download SVG</button>
+  <div class="control">
+    <label class="check"><input type="checkbox" id="shapes" checked> Detect simple shapes</label>
+    <small>Areas that are ellipses, circles or rectangles become exact SVG shapes.</small>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span>Colors</span><b id="statColors">–</b></div>
+    <div class="stat"><span>Layers</span><b id="statLayers">–</b></div>
+    <div class="stat"><span>Shapes</span><b id="statPaths">–</b></div>
+    <div class="stat"><span>Curves</span><b id="statCurves">–</b></div>
+    <div class="stat"><span>Size</span><b id="statSize">–</b></div>
+    <div class="stat"></div>
+    <div class="stat wide" title="Average color difference (ΔE) between the SVG and the original. Under about 2 is hard to see.">
+      <span>Match with original (lower is closer)</span><b id="statMatch">–</b>
+    </div>
+  </div>
+
+  <button id="download" disabled title="Hidden layers are left out">Download SVG</button>
   <div class="png">
     <select id="pngScale" aria-label="PNG size" disabled></select>
     <button id="downloadPng" disabled>Download PNG</button>
@@ -189,8 +247,14 @@
     <span class="tag" style="top:8px; right:8px">SVG</span>
     <span class="tag" id="hint" style="bottom:8px; left:50%; transform:translateX(-50%)"></span>
   </div>
-  <div class="busy" id="busy"><div class="spinner"></div>Vectorizing…</div>
+  <div class="busy" id="busy"><div class="spinner"></div><span id="busyText">Vectorizing…</span></div>
 </main>
+
+<section class="layers-panel">
+  <h2>Layers <span id="layerCount"></span></h2>
+  <ul class="layer-list" id="layerList"></ul>
+  <div class="layers-empty" id="layersEmpty">The layers appear here, top layer first.</div>
+</section>
 
 <script src="/static/export.js"></script>
 <script>
@@ -198,6 +262,7 @@ const $ = (id) => document.getElementById(id);
 const sliders = ["detail", "merge", "colors", "speckle"];
 let imageId = null, fileName = "image", svgText = "", vectorUrl = null;
 let timer = null, running = false, pending = false, split = 0.5;
+let svgDoc = null, layersTouched = false, seed = 0;
 
 let presets = {};
 
@@ -250,24 +315,18 @@ async function run() {
   const body = { id: imageId };
   for (const name of sliders) body[name] = Number($(name).value);
   body.remove_background = $("background").checked;
+  body.outlines = $("outlines").checked;
+  body.shapes = $("shapes").checked;
+  body.seed = seed;
+  const layers = $("layers");
+  body.max_layers = layersTouched && Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;
   try {
     const response = await fetch("/api/vectorize", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "conversion failed");
-    svgText = data.svg;
-    if (vectorUrl) URL.revokeObjectURL(vectorUrl);
-    vectorUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
-    $("vector").src = vectorUrl;
-    $("statColors").textContent = data.colors;
-    $("statPaths").textContent = data.paths.toLocaleString();
-    $("statCurves").textContent = data.curves.toLocaleString();
-    $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
-    $("download").disabled = false;
-    const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
-    fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
-    $("pngScale").disabled = $("downloadPng").disabled = false;
+    showResult(data);
   } catch (error) {
     $("error").textContent = error.message;
   } finally {
@@ -277,10 +336,141 @@ async function run() {
   }
 }
 
+function showResult(data) {
+  svgText = data.svg;
+  svgDoc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  showVector();
+  buildLayerList();
+  const layers = $("layers");
+  layers.disabled = false;
+  layers.max = data.auto_layers;
+  if (!layersTouched) layers.value = data.auto_layers;
+  showLayersValue();
+  $("statLayers").textContent = data.layers;
+  $("statColors").textContent = data.colors;
+  $("statPaths").textContent = data.paths.toLocaleString();
+  $("statCurves").textContent = data.curves.toLocaleString();
+  $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
+  $("statMatch").textContent = data.match.toFixed(2) + " ΔE";
+  $("download").disabled = false;
+  const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
+  fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
+  $("pngScale").disabled = $("downloadPng").disabled = false;
+}
+
+// The preview and the download show the SVG without the layers hidden in the panel.
+function visibleSvg() {
+  return new XMLSerializer().serializeToString(svgDoc);
+}
+
+function showVector() {
+  if (vectorUrl) URL.revokeObjectURL(vectorUrl);
+  vectorUrl = URL.createObjectURL(new Blob([visibleSvg()], { type: "image/svg+xml" }));
+  $("vector").src = vectorUrl;
+}
+
+function buildLayerList() {
+  const list = $("layerList");
+  list.innerHTML = "";
+  const root = svgDoc.documentElement;
+  const viewBox = root.getAttribute("viewBox");
+  const groups = [...root.querySelectorAll("g[data-layer]")];
+  $("layerCount").textContent = groups.length;
+  $("layersEmpty").style.display = groups.length ? "none" : "block";
+  for (const group of groups.reverse()) {  // top layer first, like in Photoshop
+    const item = document.createElement("li");
+    const count = group.children.length;
+    const content = new XMLSerializer().serializeToString(group);
+    // Zoom the thumbnail onto the layer, with a little room around it.
+    const [bx, by, bw, bh] = (group.dataset.box || viewBox).split(" ").map(Number);
+    const pad = Math.max(bw, bh) * 0.08 + 4;
+    const box = [bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad].join(" ");
+    item.innerHTML =
+      '<button class="eye" title="Hide or show this layer">👁</button>' +
+      '<div class="thumb"><svg xmlns="http://www.w3.org/2000/svg" viewBox="' + box +
+      '" preserveAspectRatio="xMidYMid meet">' + content + "</svg></div>" +
+      '<div class="name"></div>';
+    const name = item.querySelector(".name");
+    name.textContent = group.dataset.name;
+    const detail = document.createElement("small");
+    detail.textContent = "Layer " + group.dataset.layer + " · " + count + (count === 1 ? " shape" : " shapes");
+    name.appendChild(detail);
+    item.querySelector(".eye").addEventListener("click", () => {
+      const hidden = group.getAttribute("display") === "none";
+      if (hidden) group.removeAttribute("display"); else group.setAttribute("display", "none");
+      item.classList.toggle("hidden", !hidden);
+      showVector();
+    });
+    list.appendChild(item);
+  }
+}
+
+function showLayersValue() {
+  const layers = $("layers");
+  const all = Number(layers.value) >= Number(layers.max);
+  $("layersOut").textContent = all ? "all (" + layers.max + ")" : "≈ " + layers.value;
+}
+
+$("layers").addEventListener("input", () => { layersTouched = true; showLayersValue(); schedule(); });
+
+$("regenerate").addEventListener("click", () => {
+  seed += 1;
+  $("variant").textContent = "· variant " + (seed + 1);
+  schedule();
+});
+
+function applySettings(settings) {
+  for (const [name, value] of Object.entries(settings)) {
+    $(name).value = value;
+    $(name + "Out").textContent = $(name).value;
+  }
+}
+
+$("recommend").addEventListener("click", async () => {
+  if (!imageId || running) return;
+  running = true;
+  $("busyText").textContent = "Comparing settings with the original…";
+  $("busy").classList.add("on");
+  $("error").textContent = "";
+  try {
+    const response = await fetch("/api/recommend", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: imageId, speckle: Number($("speckle").value),
+        remove_background: $("background").checked, outlines: $("outlines").checked, shapes: $("shapes").checked,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "recommendation failed");
+    applySettings(data.settings);
+    markPreset(null);
+    showResult(data);
+  } catch (error) {
+    $("error").textContent = error.message;
+  } finally {
+    running = false;
+    $("busy").classList.remove("on");
+    $("busyText").textContent = "Vectorizing…";
+    if (pending) { pending = false; run(); }
+  }
+});
+
+function enableRecommend(on) {
+  $("recommend").disabled = !on;
+  $("regenerate").disabled = !on;
+}
+
 async function upload(file) {
   if (!file) return;
   fileName = file.name.replace(/\.[^.]+$/, "");
   imageId = null;
+  layersTouched = false;
+  seed = 0;
+  $("variant").textContent = "";
+  $("layerList").innerHTML = "";
+  $("layerCount").textContent = "";
+  $("layersEmpty").style.display = "block";
+  enableRecommend(false);
   $("dropText").textContent = file.name;
   $("error").textContent = "";
   $("busy").classList.add("on");
@@ -297,6 +487,7 @@ async function upload(file) {
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
     applyPreset(data.preset, true);
+    enableRecommend(true);
     run();
   } catch (error) {
     $("busy").classList.remove("on");
@@ -395,6 +586,8 @@ compare.addEventListener("pointerup", (event) => {
 compare.addEventListener("pointercancel", endDrag);
 
 $("background").addEventListener("change", () => { markPreset(null); schedule(); });
+$("outlines").addEventListener("change", schedule);
+$("shapes").addEventListener("change", schedule);
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
 const drop = $("drop");
 drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
@@ -416,7 +609,7 @@ $("downloadPng").addEventListener("click", async () => {
 
 $("download").addEventListener("click", () => {
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+  link.href = URL.createObjectURL(new Blob([visibleSvg()], { type: "image/svg+xml" }));
   link.download = fileName + ".svg";
   link.click();
   URL.revokeObjectURL(link.href);

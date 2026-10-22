@@ -1,6 +1,5 @@
 opencv-python
 numpy
-vtracer
 fastapi
 uvicorn
 python-multipart

@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
 
-MAX_SIDE = 1024
+WORK_SIDE = 1024  # images are processed at about this size, larger ones shrunk and small ones enlarged
+MAX_ENLARGE = 4
 UPSCALE = 2
 SAMPLE_SIZE = 20000
 MODE_KERNEL = 5
+SHARPEN_STEPS = 2  # toggle-filter passes; each pass sharpens soft edges by about 1 pixel
 BACKGROUND_TOLERANCE = 12  # ΔE from the border colors that still counts as background
 
 
@@ -32,12 +34,18 @@ def decode(data: bytes) -> np.ndarray:
     return to_bgra(image)
 
 
+def work_scale(image: np.ndarray) -> float:
+    return min(WORK_SIDE / max(image.shape[:2]), MAX_ENLARGE)
+
+
 def resize(image: np.ndarray) -> np.ndarray:
+    """Bring the image to the working size; enlarging small images keeps thin lines from being smoothed away."""
     height, width = image.shape[:2]
-    scale = MAX_SIDE / max(height, width)
-    if scale >= 1:
+    scale = work_scale(image)
+    if abs(scale - 1) < 0.05:
         return image
-    return cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    return cv2.resize(image, (round(width * scale), round(height * scale)), interpolation=interpolation)
 
 
 def smooth(image: np.ndarray) -> np.ndarray:
@@ -48,7 +56,15 @@ def smooth(image: np.ndarray) -> np.ndarray:
 
 def prepare(image: np.ndarray) -> np.ndarray:
     """Color-independent steps; the result can be reused for any color settings."""
-    return smooth(resize(image))
+    scale = work_scale(image)
+    image = resize(image)
+    if scale > 1:
+        # Blur away the enlarged pixel staircase; sharpening then turns it into a smooth edge.
+        sigma = 0.6 * scale
+        image = np.dstack([cv2.GaussianBlur(image[:, :, :3], (0, 0), sigma), image[:, :, 3]])
+    # Light sharpening only: more passes make soft edges jagged; the leftover soft edges are
+    # merged into their neighbors when the layers are built.
+    return sharpen_edges(smooth(image), SHARPEN_STEPS)
 
 
 def to_lab(image: np.ndarray) -> np.ndarray:
@@ -60,6 +76,7 @@ def border_colors(lab: np.ndarray) -> np.ndarray:
     border = np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])
     count = min(3, len(np.unique(border, axis=0)))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.5)
+    cv2.setRNGSeed(0)  # same image, same colors every time
     _, labels, centers = cv2.kmeans(border, count, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
     shares = np.bincount(labels.flatten(), minlength=count) / len(border)
     return centers[shares > 0.1]
@@ -89,12 +106,13 @@ def foreground(prepared: np.ndarray, remove_background: bool) -> np.ndarray:
     return ~background
 
 
-def palette(lab: np.ndarray, colors: int) -> tuple[np.ndarray, np.ndarray]:
+def palette(lab: np.ndarray, colors: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """K-means on a random sample of the given Lab pixels. Returns cluster centers and their pixel counts."""
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
     sample = lab[rng.choice(len(lab), min(SAMPLE_SIZE, len(lab)), replace=False)]
     colors = min(colors, len(np.unique(sample, axis=0)))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.5)
+    cv2.setRNGSeed(seed)  # same image and seed, same colors every time; another seed gives a variant
     _, labels, centers = cv2.kmeans(sample, colors, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
     counts = np.bincount(labels.flatten(), minlength=colors).astype(np.float64)
     return centers.astype(np.float64), counts
@@ -130,6 +148,35 @@ def assign(lab: np.ndarray, centers: np.ndarray) -> np.ndarray:
     return labels
 
 
+def sharpen_edges(image: np.ndarray, iterations: int) -> np.ndarray:
+    """Toggle filter: each pixel takes the darkest or lightest color around it, whichever is closer.
+
+    Soft anti-aliased edges collapse into a sharp step in the middle, so they do not turn into
+    thin bands of in-between colors. A thin line keeps its core, because the core is already the
+    darkest (or lightest) color around it.
+    """
+    bgr = np.ascontiguousarray(image[:, :, :3])
+    height, width = bgr.shape[:2]
+    for _ in range(iterations):
+        light = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        padded = cv2.copyMakeBorder(bgr, 1, 1, 1, 1, cv2.BORDER_REPLICATE)
+        padded_light = cv2.copyMakeBorder(light, 1, 1, 1, 1, cv2.BORDER_REPLICATE)
+        dark, dark_light = bgr.copy(), light.copy()
+        bright, bright_light = bgr.copy(), light.copy()
+        for dy in range(3):
+            for dx in range(3):
+                color = padded[dy:dy + height, dx:dx + width]
+                value = padded_light[dy:dy + height, dx:dx + width]
+                darker = value < dark_light
+                dark[darker], dark_light[darker] = color[darker], value[darker]
+                brighter = value > bright_light
+                bright[brighter], bright_light[brighter] = color[brighter], value[brighter]
+        to_dark = (light - dark_light) < (bright_light - light)
+        flat = (bright_light - dark_light) < 8  # leave flat areas and gentle gradients alone
+        bgr = np.where(flat[..., None], bgr, np.where(to_dark[..., None], dark, bright))
+    return np.dstack([bgr, image[:, :, 3]])
+
+
 def mode_filter(labels: np.ndarray, count: int) -> np.ndarray:
     """Replace each pixel with the most common label around it, removing stair-steps and specks."""
     best = np.full(labels.shape, -1.0, np.float32)
@@ -143,7 +190,7 @@ def mode_filter(labels: np.ndarray, count: int) -> np.ndarray:
 
 
 def quantize(
-    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True
+    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True, seed: int = 0
 ) -> tuple[np.ndarray, int]:
     """Reduce to at most `colors` flat colors, merging ones closer than `merge` ΔE, at UPSCALE resolution.
 
@@ -152,11 +199,12 @@ def quantize(
     mask = foreground(prepared, remove_background)
     if not mask.any():
         raise ValueError("the image has no visible pixels")
-    centers, counts = palette(to_lab(prepared)[mask], colors)
+    centers, counts = palette(to_lab(prepared)[mask], colors, seed)
     centers = merge_colors(centers, counts, merge)
     height, width = prepared.shape[:2]
     size = (width * UPSCALE, height * UPSCALE)
-    large = cv2.resize(prepared, size, interpolation=cv2.INTER_CUBIC)
+    # Linear (not cubic) so the enlarged edges never overshoot into darker or lighter colors.
+    large = cv2.resize(prepared, size, interpolation=cv2.INTER_LINEAR)
     large_mask = cv2.resize(mask.astype(np.float32), size, interpolation=cv2.INTER_LINEAR) >= 0.5
     labels = assign(to_lab(large), centers)
     transparent = len(centers)
@@ -167,3 +215,14 @@ def quantize(
     bgra[:transparent, :3] = np.clip(bgr * 255 + 0.5, 0, 255)
     bgra[:transparent, 3] = 255
     return bgra[labels], transparent
+
+
+def give_to_neighbors(image: np.ndarray, pixels: np.ndarray) -> np.ndarray:
+    """Recolor `pixels` with the nearest other pixel's color, so the shapes around meet underneath."""
+    _, nearest = cv2.distanceTransformWithLabels(pixels.astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL)
+    kept = ~pixels
+    lookup = np.zeros((nearest.max() + 1, image.shape[2]), np.uint8)
+    lookup[nearest[kept]] = image[kept]
+    result = image.copy()
+    result[pixels] = lookup[nearest[pixels]]
+    return result
