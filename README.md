@@ -88,6 +88,10 @@ uvicorn app:app --reload
 
 Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 
+### PNG export
+
+Both the main page and every gallery tile can also save the result as a PNG: pick a size (×1, ×2, ×4 or ×8 of the image size; the list shows the pixel size) and click **Download PNG** / **PNG**. The browser draws the SVG straight at that size, so a PNG made from the vector stays sharp at ×8, unlike an enlarged raster image. Transparent backgrounds stay transparent. Sizes above 8192 px per side are disabled because browsers cannot draw such large images.
+
 ### Gallery
 
 Open http://127.0.0.1:8000/gallery (or the **Gallery** link on the main page). When the server starts, every image in `img/` is converted in the background with its auto-detected preset; the gallery shows a loader until they are done. Each image you convert on the main page appears on top as history and is updated when you change its settings.

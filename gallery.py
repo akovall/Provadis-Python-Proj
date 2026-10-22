@@ -95,6 +95,7 @@ def new_tile(tile_id: str, name: str, source: str) -> dict:
     return {
         "id": tile_id, "name": name, "source": source, "status": "queued", "message": "",
         "preset": None, "auto": False, "settings": None, "version": 0,
+        "width": None, "height": None,
         "colors": None, "paths": None, "curves": None, "bytes": None, "seconds": None, "error": None, "rating": None,
         "svg": None, "original": None, "reference": None, "prepared": None,
     }
@@ -123,6 +124,7 @@ def convert_file(tile_id: str, path: Path) -> None:
     update(
         tile_id, status="done", preset=preset, auto=True, settings=settings, colors=colors, seconds=round(seconds, 1),
         error=error, rating=rate(error), svg=svg, original=thumbnail(reference), version=1, **stats(svg),
+        width=reference.shape[1], height=reference.shape[0],
     )
 
 
@@ -146,7 +148,10 @@ def record(
         tile = tiles.get(upload_id)
         if tile is None:
             tile = new_tile(upload_id, name, "history")
-            tile.update(original=thumbnail(reference), reference=reference, prepared=prepared)
+            tile.update(
+                original=thumbnail(reference), reference=reference, prepared=prepared,
+                width=reference.shape[1], height=reference.shape[0],
+            )
             tiles[upload_id] = tile
             tiles.move_to_end(upload_id, last=False)
             history = [key for key, item in tiles.items() if item["source"] == "history"]

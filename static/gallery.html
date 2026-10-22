@@ -63,11 +63,16 @@
   .metrics .poor { color: #dc2626; }
   .status { color: var(--muted); font-size: 12px; }
   .status.failed { color: #dc2626; }
-  .download {
-    align-self: flex-start; background: var(--accent); color: var(--accent-text); border-radius: 6px;
-    padding: 6px 12px; text-decoration: none; font-weight: 600; font-size: 13px;
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .actions[hidden] { display: none; }
+  .download, .png {
+    background: var(--accent); color: var(--accent-text); border: 0; border-radius: 6px; cursor: pointer;
+    padding: 6px 12px; text-decoration: none; font: inherit; font-weight: 600; font-size: 13px;
   }
-  .download[hidden] { display: none; }
+  .scale {
+    min-width: 0; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
   @media (max-width: 700px) {
     header { padding: 12px 16px; }
     .grid { padding: 16px; grid-template-columns: 1fr; }
@@ -100,11 +105,16 @@
         <div><dt>Time</dt><dd class="seconds"></dd></div>
       </dl>
       <div class="status"></div>
-      <a class="download" hidden>Download SVG</a>
+      <div class="actions" hidden>
+        <a class="download" title="Download SVG">↓ SVG</a>
+        <select class="scale" aria-label="PNG size"></select>
+        <button class="png" type="button" title="Download PNG of the chosen size">↓ PNG</button>
+      </div>
     </div>
   </article>
 </template>
 
+<script src="/static/export.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const cards = new Map();
@@ -114,6 +124,17 @@ let order = "";
 function createCard(tile) {
   const card = $("cardTemplate").content.firstElementChild.cloneNode(true);
   card.dataset.version = "0";
+  card.querySelector(".png").addEventListener("click", async () => {
+    const scale = Number(card.querySelector(".scale").value);
+    const status = card.querySelector(".status");
+    try {
+      const response = await fetch(card.querySelector(".svg").src);
+      if (!response.ok) throw new Error("the SVG is no longer in the gallery");
+      await downloadPng(await response.text(), scale, `${card.dataset.stem}@${scale}x.png`);
+    } catch (error) {
+      status.textContent = "PNG failed: " + error.message;
+    }
+  });
   cards.set(tile.id, card);
   return card;
 }
@@ -140,9 +161,11 @@ function fill(card, tile) {
     const base = `/api/gallery/${tile.id}/`;
     if (!field("original").getAttribute("src")) field("original").src = base + "original.png";
     field("svg").src = `${base}image.svg?v=${tile.version}`;
+    card.dataset.stem = tile.name.replace(/\.[^.]+$/, "");
     field("download").href = field("svg").src;
-    field("download").download = tile.name.replace(/\.[^.]+$/, "") + ".svg";
-    field("download").hidden = false;
+    field("download").download = card.dataset.stem + ".svg";
+    fillScaleSelect(field("scale"), tile.width, tile.height);
+    field("actions").hidden = false;
     card.dataset.version = String(tile.version);
   }
 }

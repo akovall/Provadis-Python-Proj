@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import gallery
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Image to SVG", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 # Uploaded images, prepared once. Each entry also caches the last quantized image and
 # the last raw trace, so moving the detail slider only re-runs the curve refit.
