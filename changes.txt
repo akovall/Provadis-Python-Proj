@@ -27,12 +27,34 @@ Other
 - README.md: updated.
 
 
+Smoother curves, fewer points (curves.py, round 2)
+- vtracer made many tiny Bezier segments (some ~2 px long), even on round edges.
+- New step refits every outline: finds real corners, smooths the line between them,
+  then fits as few Bezier curves as possible within an error tolerance.
+- Curve detail slider now controls that tolerance (6 px at 1 down to 0.6 px at 10).
+  Mushroom: ~8,400 curves from vtracer -> 940 at detail 1, 1,130 at detail 4, 4,800 at detail 10.
+- Web page: moving only the detail slider skips tracing and just refits (~1.5-4 s).
+
+
+Transparent background (preprocess.py, round 3)
+- Before: the background was just another color, so white parts inside an object
+  (like the white marks on the panda's hands) were treated the same as the background.
+- Now the object is separated from the background first (an alpha mask):
+  - a real alpha channel is used if the image has one,
+  - otherwise the background is the area of border-like colors that touches the image edge.
+    Same-colored areas inside the object are not connected to the edge, so they stay real shapes.
+- Also removes painted checkerboard "fake transparency" backgrounds.
+- The SVG has a transparent background. Web page: "Remove background" checkbox (on by default),
+  preview shows a checkerboard. CLI: --keep-background to turn it off.
+
+
 THINGS TO KNOW
 ==============
 
-- Slow: each slider change takes about 3.5 seconds on the mushroom image.
-  Curve detail and Remove specks skip the color step, but tracing itself is the slow part.
-- The detail slider has a limited range: on the mushroom it only goes from about
-  5,800 to 9,200 curves. For stronger simplification, the next step would be potrace.
+- Speed: a slider change takes about 1.5-4 s on the mushroom image, detail 10 is the slowest.
+- At very low detail, thin lines (like the dark outline) can look a little thinner in places,
+  because every color shape is smoothed on its own.
+- Background removal works from the border, so if the object touches the image edge with a
+  color close to the background, that part can be removed too. Use --keep-background then.
 - The web page was tested through its API, not clicked through in a browser yet.
 - Nothing is committed yet.

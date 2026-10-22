@@ -5,20 +5,31 @@ MAX_SIDE = 1024
 UPSCALE = 2
 SAMPLE_SIZE = 20000
 MODE_KERNEL = 5
+BACKGROUND_TOLERANCE = 12  # ΔE from the border colors that still counts as background
+
+
+def to_bgra(image: np.ndarray) -> np.ndarray:
+    if image.dtype != np.uint8:
+        image = (image / 257).astype(np.uint8)
+    if image.ndim == 2:
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGRA)
+    if image.shape[2] == 3:
+        return cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    return image
 
 
 def load(path: str) -> np.ndarray:
-    image = cv2.imread(path)
+    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError(f"cannot read image: {path}")
-    return image
+    return to_bgra(image)
 
 
 def decode(data: bytes) -> np.ndarray:
-    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError("cannot read image")
-    return image
+    return to_bgra(image)
 
 
 def resize(image: np.ndarray) -> np.ndarray:
@@ -30,8 +41,9 @@ def resize(image: np.ndarray) -> np.ndarray:
 
 
 def smooth(image: np.ndarray) -> np.ndarray:
-    """Flatten textures and JPEG noise while keeping edges sharp."""
-    return cv2.pyrMeanShiftFiltering(image, 8, 18)
+    """Flatten textures and JPEG noise while keeping edges sharp. The alpha channel is kept as is."""
+    bgr = cv2.pyrMeanShiftFiltering(np.ascontiguousarray(image[:, :, :3]), 8, 18)
+    return np.dstack([bgr, image[:, :, 3]])
 
 
 def prepare(image: np.ndarray) -> np.ndarray:
@@ -40,14 +52,47 @@ def prepare(image: np.ndarray) -> np.ndarray:
 
 
 def to_lab(image: np.ndarray) -> np.ndarray:
-    return cv2.cvtColor(image.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)
+    return cv2.cvtColor(np.ascontiguousarray(image[:, :, :3]).astype(np.float32) / 255, cv2.COLOR_BGR2Lab)
+
+
+def border_colors(lab: np.ndarray) -> np.ndarray:
+    """The main colors along the image edges (several, e.g. for a painted checkerboard)."""
+    border = np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])
+    count = min(3, len(np.unique(border, axis=0)))
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.5)
+    _, labels, centers = cv2.kmeans(border, count, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
+    shares = np.bincount(labels.flatten(), minlength=count) / len(border)
+    return centers[shares > 0.1]
+
+
+def foreground(prepared: np.ndarray, remove_background: bool) -> np.ndarray:
+    """Mask of the object pixels.
+
+    A real alpha channel is used when the image has one. Otherwise, with `remove_background`,
+    pixels close to the border colors that are connected to the image edge become background.
+    Areas of the same color inside the object (e.g. white details) are not connected to the
+    edge, so they stay part of the object.
+    """
+    alpha = prepared[:, :, 3]
+    if alpha.min() < 128:
+        return alpha >= 128
+    if not remove_background:
+        return np.ones(alpha.shape, bool)
+    lab = to_lab(prepared)
+    distance = np.min([np.linalg.norm(lab - center, axis=2) for center in border_colors(lab)], axis=0)
+    candidate = (distance < BACKGROUND_TOLERANCE).astype(np.uint8)
+    _, regions = cv2.connectedComponents(candidate, connectivity=4)
+    edge = np.unique(np.concatenate([regions[0], regions[-1], regions[:, 0], regions[:, -1]]))
+    background = np.isin(regions, edge[edge > 0])
+    if background.all():
+        return np.ones(alpha.shape, bool)
+    return ~background
 
 
 def palette(lab: np.ndarray, colors: int) -> tuple[np.ndarray, np.ndarray]:
-    """K-means on a random pixel sample. Returns cluster centers and their pixel counts."""
-    pixels = lab.reshape(-1, 3)
+    """K-means on a random sample of the given Lab pixels. Returns cluster centers and their pixel counts."""
     rng = np.random.default_rng(0)
-    sample = pixels[rng.choice(len(pixels), min(SAMPLE_SIZE, len(pixels)), replace=False)]
+    sample = lab[rng.choice(len(lab), min(SAMPLE_SIZE, len(lab)), replace=False)]
     colors = min(colors, len(np.unique(sample, axis=0)))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.5)
     _, labels, centers = cv2.kmeans(sample, colors, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
@@ -97,15 +142,28 @@ def mode_filter(labels: np.ndarray, count: int) -> np.ndarray:
     return result
 
 
-def quantize(prepared: np.ndarray, colors: int = 16, merge: float = 8.0) -> tuple[np.ndarray, int]:
+def quantize(
+    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True
+) -> tuple[np.ndarray, int]:
     """Reduce to at most `colors` flat colors, merging ones closer than `merge` ΔE, at UPSCALE resolution.
 
-    Returns the flat-color image and the number of colors left after merging.
+    Returns a BGRA image (background fully transparent) and the number of colors left after merging.
     """
-    centers, counts = palette(to_lab(prepared), colors)
+    mask = foreground(prepared, remove_background)
+    if not mask.any():
+        raise ValueError("the image has no visible pixels")
+    centers, counts = palette(to_lab(prepared)[mask], colors)
     centers = merge_colors(centers, counts, merge)
     height, width = prepared.shape[:2]
-    large = cv2.resize(prepared, (width * UPSCALE, height * UPSCALE), interpolation=cv2.INTER_CUBIC)
-    labels = mode_filter(assign(to_lab(large), centers), len(centers))
+    size = (width * UPSCALE, height * UPSCALE)
+    large = cv2.resize(prepared, size, interpolation=cv2.INTER_CUBIC)
+    large_mask = cv2.resize(mask.astype(np.float32), size, interpolation=cv2.INTER_LINEAR) >= 0.5
+    labels = assign(to_lab(large), centers)
+    transparent = len(centers)
+    labels[~large_mask] = transparent
+    labels = mode_filter(labels, transparent + 1)
     bgr = cv2.cvtColor(centers.reshape(1, -1, 3), cv2.COLOR_Lab2BGR).reshape(-1, 3)
-    return np.clip(bgr * 255 + 0.5, 0, 255).astype(np.uint8)[labels], len(centers)
+    bgra = np.zeros((transparent + 1, 4), np.uint8)
+    bgra[:transparent, :3] = np.clip(bgr * 255 + 0.5, 0, 255)
+    bgra[:transparent, 3] = 255
+    return bgra[labels], transparent

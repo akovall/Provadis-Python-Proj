@@ -5,11 +5,13 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 ## How it works
 
 1. `preprocess.py` prepares the image with OpenCV:
+   - separates the object from the background: a real alpha channel is used if the image has one, otherwise the background is the area of border-like colors connected to the image edge (same-colored areas inside the object stay),
    - shrinks large images and flattens textures and JPEG noise with mean-shift filtering,
    - picks a color palette with k-means in Lab color space and merges colors that look alike (ΔE threshold),
    - upscales 2× and assigns every pixel to a palette color, then runs a majority filter to remove stair-steps and specks.
-2. `vectorize.py` traces the flat-color image with [vtracer](https://github.com/visioncortex/vtracer). The curve detail setting controls how many Bezier points are kept.
-3. `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
+2. `vectorize.py` traces the flat-color image with [vtracer](https://github.com/visioncortex/vtracer).
+3. `curves.py` refits every outline with as few Bezier curves as possible: it finds real corners, smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
+4. `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 
 ## Installation
 
@@ -61,6 +63,7 @@ python main.py --help
 | `--merge` | 8 | Colors closer than this ΔE are combined into one. |
 | `--colors` | 16 | Maximum number of colors. |
 | `--speckle` | 4 | Shapes smaller than this many pixels are dropped. |
+| `--keep-background` | off | Keep the background instead of making it transparent. |
 
 ### Web page
 

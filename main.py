@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--merge", type=float, default=8.0, help="merge colors closer than this ΔE (default: 8)")
     parser.add_argument("--detail", type=int, default=4, help="curve detail 1-10, higher keeps more points (default: 4)")
     parser.add_argument("--speckle", type=int, default=4, help="drop shapes smaller than this many pixels (default: 4)")
+    parser.add_argument("--keep-background", action="store_true", help="keep the background instead of making it transparent")
     args = parser.parse_args()
 
     path = Path(args.image)
@@ -26,7 +27,7 @@ def main() -> None:
 
     output = args.output or str(path.with_suffix(".svg"))
     try:
-        image, _ = quantize(prepare(load(str(path))), args.colors, args.merge)
+        image, _ = quantize(prepare(load(str(path))), args.colors, args.merge, not args.keep_background)
         with open(output, "w", encoding="utf-8") as file:
             file.write(vectorize(image, args.detail, args.speckle))
         print(f"SVG saved to {output}")
