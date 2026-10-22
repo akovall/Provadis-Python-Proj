@@ -46,27 +46,56 @@
   button:disabled { opacity: .4; cursor: default; }
   main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .empty { color: var(--muted); }
-  .compare { position: relative; max-width: 100%; max-height: 100%; display: none; user-select: none; }
+  .compare { position: relative; overflow: hidden; display: none; user-select: none; touch-action: none; cursor: zoom-in; }
   .compare.ready { display: block; }
-  .compare img { display: block; max-width: calc(100vw - 350px); max-height: calc(100vh - 48px); }
-  .compare .vector {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    background: repeating-conic-gradient(#d6d3d1 0 25%, #ffffff 0 50%) 0 0 / 16px 16px;
-  }
   .control .check { justify-content: flex-start; gap: 8px; align-items: center; cursor: pointer; }
   .control .check input { width: auto; }
-  .compare .divider { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; }
-  .compare .tag {
-    position: absolute; top: 8px; padding: 2px 8px; border-radius: 4px; font-size: 12px;
-    background: rgba(0,0,0,.6); color: #fff;
+  .compare.zoomed { cursor: grab; }
+  .compare.dragging { cursor: grabbing; }
+  .layer { position: absolute; inset: 0; overflow: hidden; }
+  /* Checkerboard shows transparent SVG areas; only once the SVG is there, so the original stays visible while loading */
+  .layer.vector:has(img[src]) {
+    background: repeating-conic-gradient(#d6d3d1 0 25%, #ffffff 0 50%) 0 0 / 16px 16px;
   }
-  .busy { position: absolute; top: 16px; right: 16px; color: var(--muted); display: none; }
-  .busy.on { display: block; }
+  .compare img:not([src]) { visibility: hidden; }
+  /* Zoom changes the real size instead of a CSS transform, so the browser redraws the SVG sharply */
+  .compare img {
+    position: absolute; max-width: none; pointer-events: none;
+    transition: left .2s, top .2s, width .2s, height .2s;
+  }
+  .compare.dragging img { transition: none; }
+  /* Show raster pixels as they are instead of letting the browser blur them */
+  .compare img.pixelated { image-rendering: pixelated; }
+  .divider {
+    position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .divider::before { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+  .divider span {
+    position: relative; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+    color: var(--accent-text); font-size: 12px; line-height: 24px; text-align: center;
+  }
+  .tag {
+    position: absolute; padding: 2px 8px; border-radius: 4px; font-size: 12px;
+    background: rgba(0,0,0,.6); color: #fff; pointer-events: none;
+  }
+  .busy {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    display: none; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+  .busy.on { display: flex; }
+  .spinner {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .error { color: #dc2626; }
   @media (max-width: 700px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
     aside { border-right: 0; border-bottom: 1px solid var(--border); }
-    .compare img { max-width: calc(100vw - 32px); }
     main { padding: 16px; }
   }
 </style>
@@ -122,13 +151,14 @@
 <main id="main">
   <div class="empty" id="empty">Upload an image to start.</div>
   <div class="compare" id="compare">
-    <img id="original" alt="Original image">
-    <img class="vector" id="vector" alt="Vectorized image">
-    <div class="divider" id="divider"></div>
-    <span class="tag" style="left:8px">Original</span>
-    <span class="tag" style="right:8px">SVG</span>
+    <div class="layer"><img id="original" alt="Original image"></div>
+    <div class="layer vector" id="vectorLayer"><img id="vector" alt="Vectorized image"></div>
+    <div class="divider" id="divider"><span>↔</span></div>
+    <span class="tag" style="top:8px; left:8px">Original</span>
+    <span class="tag" style="top:8px; right:8px">SVG</span>
+    <span class="tag" id="hint" style="bottom:8px; left:50%; transform:translateX(-50%)"></span>
   </div>
-  <div class="busy" id="busy">Vectorizing…</div>
+  <div class="busy" id="busy"><div class="spinner"></div>Vectorizing…</div>
 </main>
 
 <script>
@@ -185,9 +215,13 @@ async function run() {
 async function upload(file) {
   if (!file) return;
   fileName = file.name.replace(/\.[^.]+$/, "");
+  imageId = null;
   $("dropText").textContent = file.name;
   $("error").textContent = "";
   $("busy").classList.add("on");
+  $("empty").style.display = "none";
+  $("compare").classList.add("ready");
+  setSplit(0.5);
   $("original").src = URL.createObjectURL(file);
   $("vector").removeAttribute("src");
   const form = new FormData();
@@ -197,31 +231,102 @@ async function upload(file) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
-    $("empty").style.display = "none";
-    $("compare").classList.add("ready");
-    setSplit(0.5);
     run();
   } catch (error) {
     $("busy").classList.remove("on");
+    $("compare").classList.remove("ready");
+    $("empty").style.display = "";
     $("error").textContent = error.message;
   }
 }
 
 function setSplit(value) {
   split = Math.min(Math.max(value, 0), 1);
-  $("vector").style.clipPath = `inset(0 0 0 ${split * 100}%)`;
-  $("divider").style.left = `calc(${split * 100}% - 1px)`;
+  $("vectorLayer").style.clipPath = `inset(0 0 0 ${split * 100}%)`;
+  $("divider").style.left = `${split * 100}%`;
 }
 
-const compare = $("compare");
-let dragging = false;
-const move = (event) => {
+const ZOOM = 4;
+const compare = $("compare"), original = $("original"), vector = $("vector");
+let baseWidth = 0, baseHeight = 0, fit = 1, zoom = 1, offsetX = 0, offsetY = 0;
+let drag = null, splitting = false;
+
+function layout() {
+  if (!original.naturalWidth) return;
+  const main = $("main"), padding = parseFloat(getComputedStyle(main).paddingLeft) * 2;
+  const small = matchMedia("(max-width: 700px)").matches;
+  const width = main.clientWidth - padding;
+  const height = small ? innerHeight * 0.7 : main.clientHeight - padding;
+  // Fill the free space even when the image is small, so its pixels are visible right away
+  fit = Math.min(width / original.naturalWidth, height / original.naturalHeight);
+  baseWidth = Math.round(original.naturalWidth * fit);
+  baseHeight = Math.round(original.naturalHeight * fit);
+  compare.style.width = baseWidth + "px";
+  compare.style.height = baseHeight + "px";
+  update();
+}
+
+function update() {
+  const width = baseWidth * zoom, height = baseHeight * zoom;
+  offsetX = Math.min(0, Math.max(baseWidth - width, offsetX));
+  offsetY = Math.min(0, Math.max(baseHeight - height, offsetY));
+  for (const img of [original, vector]) {
+    Object.assign(img.style, { left: offsetX + "px", top: offsetY + "px", width: width + "px", height: height + "px" });
+  }
+  original.classList.toggle("pixelated", fit * zoom > 1);
+  compare.classList.toggle("zoomed", zoom > 1);
+  $("hint").textContent = zoom > 1 ? `×${ZOOM} · drag to move · click to zoom out` : "Click to zoom in";
+}
+
+function toggleZoom(event) {
+  if (zoom > 1) {
+    zoom = 1;
+  } else {
+    // Keep the clicked point under the cursor
+    const rect = compare.getBoundingClientRect();
+    offsetX = (event.clientX - rect.left) * (1 - ZOOM);
+    offsetY = (event.clientY - rect.top) * (1 - ZOOM);
+    zoom = ZOOM;
+  }
+  update();
+}
+
+function moveSplit(event) {
   const rect = compare.getBoundingClientRect();
   setSplit((event.clientX - rect.left) / rect.width);
-};
-compare.addEventListener("pointerdown", (event) => { dragging = true; compare.setPointerCapture(event.pointerId); move(event); });
-compare.addEventListener("pointermove", (event) => { if (dragging) move(event); });
-compare.addEventListener("pointerup", () => { dragging = false; });
+}
+
+function endDrag() {
+  drag = null;
+  compare.classList.remove("dragging");
+}
+
+original.addEventListener("load", () => { zoom = 1; layout(); });
+window.addEventListener("resize", layout);
+
+compare.addEventListener("pointerdown", (event) => {
+  compare.setPointerCapture(event.pointerId);
+  splitting = event.target.closest("#divider") !== null;
+  drag = { x: event.clientX, y: event.clientY, offsetX, offsetY, moved: false };
+});
+compare.addEventListener("pointermove", (event) => {
+  if (!drag) return;
+  if (splitting) return moveSplit(event);
+  const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+  // A few pixels of movement still count as a click
+  if (Math.hypot(dx, dy) > 4) drag.moved = true;
+  if (drag.moved && zoom > 1) {
+    compare.classList.add("dragging");
+    offsetX = drag.offsetX + dx;
+    offsetY = drag.offsetY + dy;
+    update();
+  }
+});
+compare.addEventListener("pointerup", (event) => {
+  if (drag && !splitting && !drag.moved) toggleZoom(event);
+  endDrag();
+});
+compare.addEventListener("pointercancel", endDrag);
 
 $("background").addEventListener("change", schedule);
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
