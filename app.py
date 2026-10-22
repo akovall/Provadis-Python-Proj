@@ -187,7 +187,8 @@ def convert(settings: Settings) -> dict:
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)
     gallery.record(
-        settings.id, entry["name"], entry["reference"], entry["plain"], svg, settings.model_dump(exclude={"id"}), entry["colors"]
+        settings.id, entry["name"], entry["image"], entry["reference"], entry["plain"], svg,
+        settings.model_dump(exclude={"id"}), entry["colors"],
     )
     return response
 
@@ -237,6 +238,14 @@ def gallery_original(tile_id: str) -> Response:
 @app.get("/api/gallery/{tile_id}/full.png")
 def gallery_full(tile_id: str) -> Response:
     data = gallery.full_image(tile_id)
+    if data is None:
+        raise HTTPException(404, "not in the gallery")
+    return Response(data, media_type="image/png")
+
+
+@app.get("/api/gallery/{tile_id}/source.png")
+def gallery_source(tile_id: str) -> Response:
+    data = gallery.source_image(tile_id)
     if data is None:
         raise HTTPException(404, "not in the gallery")
     return Response(data, media_type="image/png")

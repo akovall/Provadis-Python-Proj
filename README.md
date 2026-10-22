@@ -121,6 +121,8 @@ Open http://127.0.0.1:8000/gallery (or the **Gallery** link on the main page). W
 
 Click a tile's pictures to open it full screen with the same split view and zoom as the main page (click to zoom in, drag to move, drag the ↔ handle to compare). Use ← / → or the side buttons to go to the previous or next tile, and Esc, × or a click on the dark background to close it. The viewer has the same SVG and PNG download buttons as the tiles.
 
+**✎ Edit** (on a tile or in the viewer) opens the image on the main page with the same settings, to keep working on it: the original at full size, the sliders, the checkboxes, the layer count and the variant. Your changes then appear as a new history tile; the one you opened stays as it was. It also works for an image that failed, for example one too detailed to split into layers, so you can retry it with fewer colors.
+
 The **Tiles / Charts / Table** switch at the top shows the same results in three ways. **Charts** has one bar chart per number (error, file size, curves, paths, colors, time) with every image in the same order, best error first; hover or focus a bar to see its exact value and to highlight that image in all charts. The error chart marks the good and okay limits. **Table** lists every image with all numbers at once.
 
 Every tile shows the original next to the SVG, the preset and these numbers:

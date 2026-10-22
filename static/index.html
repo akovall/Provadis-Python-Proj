@@ -303,7 +303,7 @@ async function run() {
   body.separate = separate;
   $("busyText").textContent = separate ? "Separating into layers…" : "Vectorizing…";
   const layers = $("layers");
-  body.max_layers = layersTouched && Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;
+  body.max_layers = Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;  // all the way right: every layer
   body.ai_upscale = $("ai").checked;
   try {
     const response = await fetch("/api/vectorize", {
@@ -451,7 +451,28 @@ function enableButtons(on) {
   $("regenerate").disabled = !on;
 }
 
-async function upload(file) {
+// Settings of a gallery image: a preset's values, or everything the converter sent for it.
+function restoreSettings({ settings, preset, auto }) {
+  for (const name of sliders) {
+    $(name).value = settings[name];
+    $(name + "Out").textContent = $(name).value;
+  }
+  $("background").checked = settings.remove_background;
+  $("outlines").checked = settings.outlines ?? true;
+  $("shapes").checked = settings.shapes ?? true;
+  seed = settings.seed ?? 0;
+  $("variant").textContent = seed ? "· variant " + (seed + 1) : "";
+  setSeparate(Boolean(settings.separate));
+  if (settings.separate) {
+    $("layers").value = settings.max_layers ?? $("layers").max;  // none: the slider was all the way right
+    showLayersValue();
+  }
+  aiWanted = Boolean(settings.ai_upscale);
+  markPreset(preset, auto);
+}
+
+// `saved` ({settings, preset, auto}) restores a gallery image's settings instead of picking a preset.
+async function upload(file, saved = null) {
   if (!file) return;
   fileName = file.name.replace(/\.[^.]+$/, "");
   imageId = null;
@@ -477,8 +498,8 @@ async function upload(file) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
-    applyPreset(data.preset, true);
-    enableRecommend(true);
+    if (saved) restoreSettings(saved); else applyPreset(data.preset, true);
+    enableButtons(true);
     aiSkip = data.ai_skip;
     $("ai").disabled = Boolean(aiSkip);
     // Remember the choice, so it comes back after an image that could not be upscaled
@@ -534,6 +555,24 @@ $("download").addEventListener("click", () => {
   link.click();
   URL.revokeObjectURL(link.href);
 });
+
+// The gallery's Edit button opens /?edit=<tile id>: load that image here with its settings.
+async function openFromGallery(id) {
+  history.replaceState(null, "", "/");  // so reloading the page does not open it again
+  try {
+    const listing = await (await fetch("/api/gallery")).json();
+    const tile = listing.tiles.find((item) => item.id === id);
+    const response = tile && await fetch(`/api/gallery/${encodeURIComponent(id)}/source.png`);
+    if (!response?.ok) throw new Error("this gallery image is no longer there, please open it again from the gallery");
+    const file = new File([await response.blob()], tile.name, { type: "image/png" });
+    upload(file, tile.settings && { settings: tile.settings, preset: tile.preset, auto: tile.auto });
+  } catch (error) {
+    $("error").textContent = error.message;
+  }
+}
+
+const editId = new URLSearchParams(location.search).get("edit");
+if (editId) openFromGallery(editId);
 </script>
 </body>
 </html>

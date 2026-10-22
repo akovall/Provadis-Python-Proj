@@ -67,7 +67,7 @@
   .status.failed { color: #dc2626; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .actions[hidden] { display: none; }
-  .download, .png {
+  .download, .png, .edit {
     background: var(--accent); color: var(--accent-text); border: 0; border-radius: 6px; cursor: pointer;
     padding: 6px 12px; text-decoration: none; font: inherit; font-weight: 600; font-size: 13px;
   }
@@ -206,6 +206,7 @@
       </dl>
       <div class="status"></div>
       <div class="actions" hidden>
+        <a class="edit" title="Open on the main page with these settings, to keep editing">✎ Edit</a>
         <a class="download" title="Download SVG">↓ SVG</a>
         <select class="scale" aria-label="PNG size"></select>
         <button class="png" type="button" title="Download PNG of the chosen size">↓ PNG</button>
@@ -221,6 +222,7 @@
     <span id="viewerError"></span>
     <span class="count" id="viewerCount"></span>
     <div class="actions viewer-actions">
+      <a class="edit" id="viewerEdit" title="Open on the main page with these settings, to keep editing">✎ Edit</a>
       <a class="download" id="viewerSvg" title="Download SVG">↓ SVG</a>
       <select class="scale" id="viewerScale" aria-label="PNG size"></select>
       <button class="png" id="viewerPng" type="button" title="Download PNG of the chosen size">↓ PNG</button>
@@ -304,9 +306,16 @@ function fill(card, tile) {
     field("download").href = field("svg").src;
     field("download").download = card.dataset.stem + ".svg";
     fillScaleSelect(field("scale"), tile.width, tile.height);
-    field("actions").hidden = false;
     card.dataset.version = String(tile.version);
   }
+  // A failed image has no SVG to download, but can still be opened for editing (e.g. with fewer colors)
+  for (const name of ["download", "scale", "png"]) field(name).hidden = !(tile.version > 0);
+  field("edit").hidden = !tile.editable;
+  field("edit").href = editUrl(tile);
+  field("actions").hidden = !(tile.version > 0 || tile.editable);
+}
+function editUrl(tile) {
+  return "/?edit=" + encodeURIComponent(tile.id);
 }
 
 function render(data) {
@@ -516,6 +525,8 @@ function showTile(id) {
   }
   shownId = tile.id;
   shownVersion = tile.version;
+  $("viewerEdit").hidden = !tile.editable;
+  $("viewerEdit").href = editUrl(tile);
   $("viewerName").textContent = tile.name;
   $("viewerPreset").textContent = tile.preset + (tile.auto ? " · auto" : "");
   $("viewerError").textContent = tile.error == null ? "" : `Error ${tile.error.toFixed(2)} (${tile.rating})`;
