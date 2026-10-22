@@ -25,6 +25,8 @@
     padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
   }
   h1 { font-size: 18px; margin: 0; }
+  .heading { display: flex; align-items: baseline; justify-content: space-between; }
+  .heading a { color: var(--accent); text-decoration: none; }
   .drop {
     border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center;
     color: var(--muted); cursor: pointer;
@@ -108,7 +110,10 @@
 </head>
 <body>
 <aside>
-  <h1>Image to SVG</h1>
+  <div class="heading">
+    <h1>Image to SVG</h1>
+    <a href="/gallery" target="_blank">Gallery ↗</a>
+  </div>
 
   <label class="drop" id="drop">
     <input type="file" id="file" accept=".png,.jpg,.jpeg">

@@ -13,6 +13,7 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 3. `curves.py` refits every outline with as few Bezier curves as possible: it finds real corners, smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
 4. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
 5. `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
+6. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
 
 ## Installation
 
@@ -86,5 +87,19 @@ uvicorn app:app --reload
 ```
 
 Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
+
+### Gallery
+
+Open http://127.0.0.1:8000/gallery (or the **Gallery** link on the main page). When the server starts, every image in `img/` is converted in the background with its auto-detected preset; the gallery shows a loader until they are done. Each image you convert on the main page appears on top as history and is updated when you change its settings.
+
+Every tile shows the original next to the SVG, the preset and these numbers:
+
+| Number | Meaning |
+|---|---|
+| Error | Average color difference between the SVG and the original, 0–255, lower is better. With a removed background only the object counts (the pixels kept as the object plus everything the SVG paints), so the transparent background is not compared with the original background color. The rating in brackets is **good** below 5, **okay** below 12 and **poor** above. |
+| Colors, Paths, Curves | Size of the vector drawing. |
+| Size, Time | SVG file size and how long the conversion took (only for `img/`). |
+
+The main converter always has priority: the gallery only works while no conversion from the main page is running. The gallery lives in memory, so it is rebuilt on every server start.
 
 To leave the virtual environment, run `deactivate`.

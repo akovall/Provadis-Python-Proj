@@ -4,3 +4,4 @@ vtracer
 fastapi
 uvicorn
 python-multipart
+resvg-py
