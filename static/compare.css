@@ -1,0 +1,35 @@
+/* Original-vs-SVG comparison with a split handle, click-to-zoom and panning (see compare.js) */
+.compare { position: relative; overflow: hidden; display: none; user-select: none; touch-action: none; cursor: zoom-in; }
+.compare.ready { display: block; }
+.compare.zoomed { cursor: grab; }
+.compare.dragging { cursor: grabbing; }
+.compare .layer { position: absolute; inset: 0; overflow: hidden; }
+/* Checkerboard shows transparent SVG areas; only once the SVG is there, so the original stays visible while loading */
+.compare .layer.vector:has(img[src]) {
+  background: repeating-conic-gradient(#d6d3d1 0 25%, #ffffff 0 50%) 0 0 / 16px 16px;
+}
+.compare img:not([src]) { visibility: hidden; }
+/* Zoom changes the real size instead of a CSS transform, so the browser redraws the SVG sharply */
+.compare img {
+  position: absolute; max-width: none; pointer-events: none;
+  transition: left .2s, top .2s, width .2s, height .2s;
+}
+.compare.dragging img { transition: none; }
+/* Show raster pixels as they are instead of letting the browser blur them */
+.compare img.pixelated { image-rendering: pixelated; }
+.compare .divider {
+  position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize;
+  display: flex; align-items: center; justify-content: center;
+}
+.compare .divider::before { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.compare .divider span {
+  position: relative; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+  color: var(--accent-text); font-size: 12px; line-height: 24px; text-align: center;
+}
+.compare .tag {
+  position: absolute; padding: 2px 8px; border-radius: 4px; font-size: 12px;
+  background: rgba(0,0,0,.6); color: #fff; pointer-events: none;
+}
+.compare .tag.original { top: 8px; left: 8px; }
+.compare .tag.svg { top: 8px; right: 8px; }
+.compare .tag.hint { bottom: 8px; left: 50%; transform: translateX(-50%); white-space: nowrap; }

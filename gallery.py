@@ -124,8 +124,8 @@ def convert_file(tile_id: str, path: Path) -> None:
     error = round(measure(svg, reference, prepared, settings["remove_background"]), 2)
     update(
         tile_id, status="done", preset=preset, auto=True, settings=settings, colors=colors, seconds=round(seconds, 1),
-        error=error, rating=rate(error), svg=svg, original=thumbnail(reference), version=1, **stats(svg),
-        width=reference.shape[1], height=reference.shape[0],
+        error=error, rating=rate(error), svg=svg, original=thumbnail(reference), reference=reference, version=1,
+        width=reference.shape[1], height=reference.shape[0], **stats(svg),
     )
 
 
@@ -176,6 +176,12 @@ def file(tile_id: str, field: str) -> str | bytes | None:
     with lock:
         tile = tiles.get(tile_id)
         return tile[field] if tile else None
+
+
+def full_image(tile_id: str) -> bytes | None:
+    """The original at working size (up to 1024 px) as PNG, for the zoomable viewer."""
+    reference = file(tile_id, "reference")
+    return None if reference is None else cv2.imencode(".png", reference)[1].tobytes()
 
 
 def work() -> None:

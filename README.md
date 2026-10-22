@@ -18,6 +18,7 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 7. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
 8. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
 9. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
+10. `static/compare.js` (with `compare.css`) is the original-vs-SVG view with the split handle and click-to-zoom, used by the main page and the gallery viewer; `static/export.js` saves PNGs.
 
 ## Installation
 
@@ -103,6 +104,10 @@ Both the main page and every gallery tile can also save the result as a PNG: pic
 ### Gallery
 
 Open http://127.0.0.1:8000/gallery (or the **Gallery** link on the main page). When the server starts, every image in `img/` is converted in the background with its auto-detected preset; the gallery shows a loader until they are done. Each image you convert on the main page appears on top as history and is updated when you change its settings.
+
+Click a tile's pictures to open it full screen with the same split view and zoom as the main page (click to zoom in, drag to move, drag the ↔ handle to compare). Use ← / → or the side buttons to go to the previous or next tile, and Esc, × or a click on the dark background to close it. The viewer has the same SVG and PNG download buttons as the tiles.
+
+The **Tiles / Charts / Table** switch at the top shows the same results in three ways. **Charts** has one bar chart per number (error, file size, curves, paths, colors, time) with every image in the same order, best error first; hover or focus a bar to see its exact value and to highlight that image in all charts. The error chart marks the good and okay limits. **Table** lists every image with all numbers at once.
 
 Every tile shows the original next to the SVG, the preset and these numbers:
 
