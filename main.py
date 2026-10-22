@@ -48,15 +48,18 @@ def main() -> None:
         if args.keep_background:
             settings["remove_background"] = False
         print(f"Preset: {preset}" + (" (auto)" if args.preset == "auto" else ""))
-        image = original
+        image, upscaled = original, False
         if args.ai_upscale:
             reason = skip_reason(original)
             if reason:
                 print(f"AI upscale skipped: {reason}")
             else:
-                image = upscale(original)
+                image, upscaled = upscale(original), True
                 print("AI upscale: done")
-        flat, _ = quantize(prepare(image), settings["colors"], settings["merge"], settings["remove_background"], args.seed)
+        flat, _ = quantize(
+            prepare(image, sharpen=not upscaled), settings["colors"], settings["merge"], settings["remove_background"],
+            args.seed, soft_edges=upscaled,
+        )
         size = (original.shape[1], original.shape[0])
         with open(output, "w", encoding="utf-8") as file:
             file.write(vectorize(

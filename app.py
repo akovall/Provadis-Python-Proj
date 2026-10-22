@@ -115,7 +115,7 @@ def use_ai_upscale(entry: dict, on: bool) -> None:
         if reason:
             raise HTTPException(400, "AI upscale is not possible: " + reason)
         start = time.perf_counter()
-        entry["prepared"] = prepare(upscale.upscale(entry["image"]))
+        entry["prepared"] = prepare(upscale.upscale(entry["image"]), sharpen=False)
         entry["ai_seconds"] = round(time.perf_counter() - start, 2)
     else:
         entry["prepared"] = entry["plain"]
@@ -147,7 +147,9 @@ def get_trace(
     key = (colors, merge, remove_background, seed)
     if entry["key"] != key:
         try:
-            entry["quantized"], entry["colors"] = quantize(entry["prepared"], colors, merge, remove_background, seed)
+            entry["quantized"], entry["colors"] = quantize(
+                entry["prepared"], colors, merge, remove_background, seed, soft_edges=entry["ai"]
+            )
         except ValueError as error:
             raise HTTPException(400, str(error))
         entry["key"] = key

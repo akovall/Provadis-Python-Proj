@@ -493,7 +493,7 @@ $("shapes").addEventListener("change", schedule);
 $("ai").addEventListener("change", () => { aiWanted = $("ai").checked; schedule(); });
 
 let aiSkip = null, aiWanted = false;
-const AI_ABOUT = "Upscales small drawings 4× with Real-ESRGAN before tracing, for sharper outlines. Up to 640 px, slower.";
+const AI_ABOUT = "Upscales small drawings 4× with Real-ESRGAN before tracing, for sharper outlines. Up to 1024 px, slower.";
 
 function showAiNote(seconds) {
   if (aiSkip) $("aiNote").textContent = "Not available for this image: " + aiSkip + ".";
