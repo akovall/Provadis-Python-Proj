@@ -182,3 +182,136 @@ def contours(layer: dict) -> list[np.ndarray]:
     found, _ = cv2.findContours(layer["shape"].astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     offset = np.array([layer["x"], layer["y"]], float) + 0.5
     return [c[:, 0].astype(float) + offset for c in found if len(c) >= 8]
+
+
+def overlaps(a: dict, b: dict) -> bool:
+    """Whether two layers' shapes (cropped masks at x, y) share any pixel."""
+    ah, aw = a["shape"].shape
+    bh, bw = b["shape"].shape
+    x0, y0 = max(a["x"], b["x"]), max(a["y"], b["y"])
+    x1, y1 = min(a["x"] + aw, b["x"] + bw), min(a["y"] + ah, b["y"] + bh)
+    if x0 >= x1 or y0 >= y1:
+        return False
+    a_part = a["shape"][y0 - a["y"]:y1 - a["y"], x0 - a["x"]:x1 - a["x"]]
+    b_part = b["shape"][y0 - b["y"]:y1 - b["y"], x0 - b["x"]:x1 - b["x"]]
+    return bool((a_part & b_part).any())
+
+
+def group(stack: list[dict]) -> list[list[int]]:
+    """Combine layers of the same color into one, where that does not change the picture.
+
+    `stack` is in drawing order. A layer joins an earlier group of its color when no layer
+    drawn in between overlaps it, so moving it down to that group hides nothing. Separate
+    lines of one color (e.g. on the mushroom's cap) become one layer this way.
+    Returns the groups in drawing order, as lists of indices into `stack`.
+    """
+    groups: list[dict] = []
+    group_of: list[int] = []
+    for index, item in enumerate(stack):
+        joined = None
+        for g in range(len(groups) - 1, -1, -1):
+            candidate = groups[g]
+            if candidate["color"] != item["color"]:
+                continue
+            # Layers whose group is drawn above the candidate group would now end up above this one.
+            between = (j for j in range(candidate["members"][0] + 1, index) if group_of[j] > g)
+            if not any(overlaps(stack[j], item) for j in between):
+                joined = g
+                break
+        if joined is None:
+            groups.append({"color": item["color"], "members": [index]})
+            group_of.append(len(groups) - 1)
+        else:
+            groups[joined]["members"].append(index)
+            group_of.append(joined)
+    return [g["members"] for g in groups]
+
+
+def lab_of(color) -> np.ndarray:
+    return to_lab(np.array(color, np.uint8).reshape(1, 1, 3))[0, 0]
+
+
+def ring_colors(image: np.ndarray, item: dict, blocked: np.ndarray) -> list[np.ndarray]:
+    """Colors touching a layer's shape, leaving out pixels in `blocked`."""
+    region = item["region"]
+    h, w = region.shape
+    window = (slice(item["y"], item["y"] + h), slice(item["x"], item["x"] + w))
+    crop = image[window]
+    ring = (cv2.dilate(region.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0) & ~region
+    ring &= (crop[:, :, 3] == 255) & ~blocked[window]
+    return [c for c in np.unique(crop[ring][:, :3], axis=0) if list(c) != list(item["color"])]
+
+
+def simplify(image: np.ndarray, stack: list[dict], groups: list[list[int]], remove: int) -> np.ndarray:
+    """Remove about `remove` layers, choosing the ones whose loss changes the picture least.
+
+    Two kinds of steps: recolor one layer with the most similar color touching it, or merge a
+    whole color into the most similar other color (that removes all of its layers at once, and
+    is the only way to get fewer layers than colors). Each step costs area x color difference;
+    the cheapest steps per removed layer are taken. The color covering most of the picture stays.
+    """
+    by_color: dict[tuple, list[int]] = {}
+    for g, members in enumerate(groups):
+        by_color.setdefault(tuple(stack[members[0]]["color"]), []).append(g)
+    palette = list(by_color)
+    nothing = np.zeros(image.shape[:2], bool)
+    area = lambda g: sum(int(stack[i]["region"].sum()) for i in groups[g])  # noqa: E731
+    keep = max(palette, key=lambda c: sum(area(g) for g in by_color[c]))
+
+    steps = []  # (cost per removed layer, layers removed, kind, payload)
+    for g in range(len(groups)):
+        item = stack[groups[g][0]]
+        if tuple(item["color"]) == keep and len(by_color[keep]) == 1:
+            continue
+        around = [c for i in groups[g] for c in ring_colors(image, stack[i], nothing)]
+        if around:
+            own = lab_of(item["color"])
+            cost = area(g) * min(np.linalg.norm(lab_of(c) - own) for c in around)
+            steps.append((cost, 1, "layer", g))
+    for color, color_groups in by_color.items():
+        if color == keep or len(palette) < 2:
+            continue
+        own = lab_of(color)
+        nearest = min((c for c in palette if c != color), key=lambda c: np.linalg.norm(lab_of(c) - own))
+        cost = sum(area(g) for g in color_groups) * np.linalg.norm(lab_of(nearest) - own)
+        steps.append((cost / len(color_groups), len(color_groups), "color", color))
+
+    chosen_layers, chosen_colors, removed = set(), set(), 0
+    for cost, count, kind, payload in sorted(steps, key=lambda s: s[0]):
+        if removed >= remove:
+            break
+        if kind == "layer":
+            if payload in chosen_layers or tuple(stack[groups[payload][0]]["color"]) in chosen_colors:
+                continue
+            chosen_layers.add(payload)
+        else:
+            if any(tuple(stack[groups[g][0]]["color"]) == payload for g in chosen_layers):
+                continue
+            chosen_colors.add(payload)
+        removed += count
+
+    # Pixels that change color in this round; their old colors are not offered as new ones.
+    gone = np.zeros(image.shape[:2], bool)
+    targets = []
+    for g in list(chosen_layers) + [g for c in chosen_colors for g in by_color[c]]:
+        for index in groups[g]:
+            item = stack[index]
+            h, w = item["region"].shape
+            gone[item["y"]:item["y"] + h, item["x"]:item["x"] + w] |= item["region"]
+            targets.append(index)
+    result = image.copy()
+    for index in targets:
+        item = stack[index]
+        color = tuple(item["color"])
+        if color in chosen_colors:
+            own = lab_of(color)
+            options = [c for c in palette if c != color and c not in chosen_colors]
+            new = min(options, key=lambda c: np.linalg.norm(lab_of(c) - own)) if options else None
+        else:
+            around = ring_colors(image, item, gone)
+            own = lab_of(color)
+            new = min(around, key=lambda c: np.linalg.norm(lab_of(c) - own)) if around else None
+        if new is not None:
+            h, w = item["region"].shape
+            result[item["y"]:item["y"] + h, item["x"]:item["x"] + w][item["region"], :3] = new
+    return result

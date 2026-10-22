@@ -123,6 +123,31 @@ Stacked layers instead of cut-out pieces (layers.py, round 7)
   Converting is faster than with vtracer, and the detail slider takes about 1 s.
 
 
+Layers panel, combined layers and layer count (round 8)
+- Shapes of one color at the same depth share one layer: a shape joins an earlier layer of its
+  color when nothing drawn in between overlaps it. Mushroom: 145 shapes -> 18 layers (all the
+  faint cap lines of one color are one layer); panda: 52 shapes -> 17 layers.
+- Each layer is an SVG group (<g data-layer data-name data-box>), so other programs see the
+  layers too.
+- Web page: Layers panel next to the controls, like in Photoshop: top layer first, thumbnail
+  zoomed onto the layer, name ("Ellipses x2", "Shapes x9", "Outline") and shape count.
+  The eye button hides a layer; hidden layers are also left out of the download.
+- "Layers" slider: about how many layers the SVG should have. The least important layers
+  (area x color difference) are blended into their surroundings, or a whole color is merged
+  into the most similar one, until the count is within 3 of the slider.
+  Tested: target 12 -> panda 15 / mushroom 12, target 8 -> 11 / 10, target 5 -> 8 / 8.
+  Match stays close down to about 8 layers (panda 1.39, mushroom 1.09).
+- Tested in a real browser (Edge, driven by Playwright): upload, layers panel, hiding a layer
+  and the Layers slider all work. Playwright was only installed for the test and removed again.
+- The layers panel is on the right side of the preview (below it on narrow screens).
+- The same image now always gives the same colors and layers (k-means used a random start that
+  changed between uploads, e.g. 17 or 19 layers for the panda).
+- "Regenerate layers" button (under the Layers slider): same settings, another variant. Each
+  click starts the color search from another point, so the colors and layers come out a little
+  different (e.g. mushroom: 15, 15, 18 layers for variants 1-3). Variant numbers repeat exactly.
+  CLI: --seed N.
+
+
 THINGS TO KNOW
 ==============
 
@@ -134,6 +159,11 @@ THINGS TO KNOW
   color close to the background, that part can be removed too. Use --keep-background then.
 - Recommended does not change "Remove background", "Remove specks", "Smooth outlines" or
   "Detect simple shapes"; set those first.
+- The Layers slider takes about 10-15 s below the automatic count (the layers are rebuilt up
+  to 5 times). Very low counts lose details that matter to people: at 5 layers the mushroom
+  loses its eyes and the panda its pupils, because the choice only looks at area and color.
+- The panel's thumbnails of very light layers (white, faint lines) are hard to see on the
+  checkerboard.
 - Shapes with holes are skipped (anything inside the hole would be hidden under the shape).
 - The panda's nose and pupils still have small bumps; they come from its soft, blurry edges.
 - Exact ellipses are a little different from soft hand-drawn ovals, so the panda's match is a
@@ -143,5 +173,4 @@ THINGS TO KNOW
   junction does not swell.
 - Very thin tapered line tips (under 4 px) stay filled shapes and can look a bit lighter.
 - Finding outlines adds about 2-4 s when the colors or specks change (not for the detail slider).
-- The web page was tested through its API, not clicked through in a browser yet.
 - Nothing is committed yet.

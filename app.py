@@ -45,6 +45,8 @@ class Settings(BaseModel):
     remove_background: bool = True
     outlines: bool = True
     shapes: bool = True
+    max_layers: int | None = Field(None, ge=2, le=500)
+    seed: int = Field(0, ge=0)  # another seed gives another variant of the colors and layers
 
 
 class RecommendRequest(BaseModel):
@@ -113,26 +115,37 @@ def reference(entry: dict, remove_background: bool) -> np.ndarray:
 
 
 def get_trace(
-    entry: dict, colors: int, merge: float, remove_background: bool, speckle: int, outlines: bool, shapes: bool
+    entry: dict,
+    colors: int,
+    merge: float,
+    remove_background: bool,
+    speckle: int,
+    outlines: bool,
+    shapes: bool,
+    max_layers: int | None = None,
+    seed: int = 0,
 ) -> Traced:
     """Quantize and trace, reusing the cached results when the settings did not change."""
-    key = (colors, merge, remove_background)
+    key = (colors, merge, remove_background, seed)
     if entry["key"] != key:
         try:
-            entry["quantized"], entry["colors"] = quantize(entry["prepared"], colors, merge, remove_background)
+            entry["quantized"], entry["colors"] = quantize(entry["prepared"], colors, merge, remove_background, seed)
         except ValueError as error:
             raise HTTPException(400, str(error))
         entry["key"] = key
-    trace_key = (key, speckle, outlines, shapes)
+    trace_key = (key, speckle, outlines, shapes, max_layers)
     if entry["trace_key"] != trace_key:
-        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes)
+        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers)
         entry["trace_key"] = trace_key
     return entry["raw"]
 
 
 def result(entry: dict, svg: str, remove_background: bool) -> dict:
     match = difference(svg, reference(entry, remove_background))
-    return {"svg": svg, "colors": entry["colors"], "match": round(match["delta"], 2), **stats(svg)}
+    return {
+        "svg": svg, "colors": entry["colors"], "match": round(match["delta"], 2),
+        "auto_layers": entry["raw"]["auto_layers"], **stats(svg),
+    }
 
 
 @app.post("/api/vectorize")
@@ -141,7 +154,7 @@ def convert(settings: Settings) -> dict:
     with gallery.priority():
         raw = get_trace(
             entry, settings.colors, settings.merge, settings.remove_background, settings.speckle,
-            settings.outlines, settings.shapes,
+            settings.outlines, settings.shapes, settings.max_layers, settings.seed,
         )
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)

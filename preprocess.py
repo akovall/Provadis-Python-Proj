@@ -76,6 +76,7 @@ def border_colors(lab: np.ndarray) -> np.ndarray:
     border = np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])
     count = min(3, len(np.unique(border, axis=0)))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.5)
+    cv2.setRNGSeed(0)  # same image, same colors every time
     _, labels, centers = cv2.kmeans(border, count, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
     shares = np.bincount(labels.flatten(), minlength=count) / len(border)
     return centers[shares > 0.1]
@@ -105,12 +106,13 @@ def foreground(prepared: np.ndarray, remove_background: bool) -> np.ndarray:
     return ~background
 
 
-def palette(lab: np.ndarray, colors: int) -> tuple[np.ndarray, np.ndarray]:
+def palette(lab: np.ndarray, colors: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """K-means on a random sample of the given Lab pixels. Returns cluster centers and their pixel counts."""
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
     sample = lab[rng.choice(len(lab), min(SAMPLE_SIZE, len(lab)), replace=False)]
     colors = min(colors, len(np.unique(sample, axis=0)))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.5)
+    cv2.setRNGSeed(seed)  # same image and seed, same colors every time; another seed gives a variant
     _, labels, centers = cv2.kmeans(sample, colors, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
     counts = np.bincount(labels.flatten(), minlength=colors).astype(np.float64)
     return centers.astype(np.float64), counts
@@ -188,7 +190,7 @@ def mode_filter(labels: np.ndarray, count: int) -> np.ndarray:
 
 
 def quantize(
-    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True
+    prepared: np.ndarray, colors: int = 16, merge: float = 8.0, remove_background: bool = True, seed: int = 0
 ) -> tuple[np.ndarray, int]:
     """Reduce to at most `colors` flat colors, merging ones closer than `merge` ΔE, at UPSCALE resolution.
 
@@ -197,7 +199,7 @@ def quantize(
     mask = foreground(prepared, remove_background)
     if not mask.any():
         raise ValueError("the image has no visible pixels")
-    centers, counts = palette(to_lab(prepared)[mask], colors)
+    centers, counts = palette(to_lab(prepared)[mask], colors, seed)
     centers = merge_colors(centers, counts, merge)
     height, width = prepared.shape[:2]
     size = (width * UPSCALE, height * UPSCALE)

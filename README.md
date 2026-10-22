@@ -10,7 +10,7 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
    - flattens textures and JPEG noise with mean-shift filtering, then lightly sharpens soft anti-aliased edges with a toggle filter,
    - picks a color palette with k-means in Lab color space and merges colors that look alike (ΔE threshold),
    - upscales 2× and assigns every pixel to a palette color, then runs a majority filter to remove stair-steps and specks.
-2. `layers.py` splits the flat-color image into stacked layers, from the biggest area at the bottom to the smallest on top. Layers are not cut out where smaller ones lie on them: a face stays one whole shape with the eyes lying on top. Thin anti-aliasing fringes and specks are merged into their neighbors first.
+2. `layers.py` splits the flat-color image into stacked layers, from the biggest area at the bottom to the smallest on top. Layers are not cut out where smaller ones lie on them: a face stays one whole shape with the eyes lying on top. Thin anti-aliasing fringes and specks are merged into their neighbors first. Shapes of the same color at the same depth (for example the separate lines on the mushroom's cap) share one layer. With a layer limit, the least important layers are blended into their surroundings until about that many are left.
 3. `shapes.py` checks every layer against simple forms: layers that are ellipses, circles or rectangles (for example eyes) become exact SVG `<ellipse>`, `<circle>` or `<rect>` elements. Only the visible part has to match, so a shape partly behind another one is recognized too.
 4. `curves.py` draws all other layers with as few Bezier curves as possible: it finds real corners (they stay sharp), smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
 5. `strokes.py` finds outlines (dark, long, thin shapes like contour lines or a mouth) and draws them on top of everything, around a smooth centerline. The thickness is measured from the original at every point, so lines stay thick or thin where they were, just without the wobble.
@@ -73,6 +73,7 @@ python main.py --help
 | `--colors` | from preset | Maximum number of colors. |
 | `--speckle` | from preset | Shapes smaller than this many pixels are dropped. |
 | `--keep-background` | off | Keep the background instead of making it transparent. |
+| `--seed` | 0 | Another number gives another variant of the colors and layers. |
 | `--no-shapes` | off | Trace ellipses, circles and rectangles like any other shape. |
 | `--no-outlines` | off | Trace dark outlines like any other shape instead of redrawing them smoothly. |
 
@@ -92,6 +93,7 @@ python main.py --help
 uvicorn app:app --reload
 ```
 
+Open http://127.0.0.1:8000, drop an image on the page and move the sliders. The **Layers** panel on the right lists every layer, top layer first, with a thumbnail; the eye button hides a layer (hidden layers are left out of the download). The **Layers** slider sets about how many layers the SVG should have (within ±3). **Regenerate layers** keeps the settings and makes another variant of the colors and layers. **Recommended for this image** tries several settings, compares each with the original and picks the simplest one that still matches closely. The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. **Recommended for this image** tries several settings, compares each with the original and picks the simplest one that still matches closely. The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 
 ### PNG export
