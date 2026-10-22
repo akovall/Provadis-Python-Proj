@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gallery · Image to SVG</title>
+<link rel="stylesheet" href="/static/compare.css">
 <style>
   :root {
     --bg: #f5f5f4; --panel: #ffffff; --text: #1c1917; --muted: #78716c;
@@ -39,6 +40,7 @@
   .empty { color: var(--muted); padding: 24px; display: none; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); }
+  .card[data-version]:not([data-version="0"]) .pair { cursor: zoom-in; }
   figure { position: relative; margin: 0; height: 170px; background: var(--panel); }
   /* Checkerboard shows transparent areas of the SVG */
   figure.transparent { background: repeating-conic-gradient(#d6d3d1 0 25%, #ffffff 0 50%) 0 0 / 16px 16px; }
@@ -58,9 +60,9 @@
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px; margin: 0; }
   .metrics dt { color: var(--muted); font-size: 11px; }
   .metrics dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-  .metrics .good { color: #16a34a; }
-  .metrics .okay { color: #d97706; }
-  .metrics .poor { color: #dc2626; }
+  .good { color: #16a34a; }
+  .okay { color: #d97706; }
+  .poor { color: #dc2626; }
   .status { color: var(--muted); font-size: 12px; }
   .status.failed { color: #dc2626; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -73,9 +75,91 @@
     min-width: 0; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text); background: var(--panel);
     border: 1px solid var(--border); border-radius: 6px;
   }
+  .views { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; }
+  .views button {
+    background: transparent; color: var(--text); border: 0; border-radius: 6px; padding: 4px 12px;
+    font: inherit; cursor: pointer;
+  }
+  .views button.active { background: var(--accent); color: var(--accent-text); }
+  /* Chart colors (checked with the dataviz palette validator against both card surfaces) */
+  :root { --series: #2a78d6; --status-good: #0ca30c; --status-okay: #fab219; --status-poor: #d03b3b; --hairline: #e1e0d9; }
+  @media (prefers-color-scheme: dark) { :root { --series: #3987e5; --hairline: #44403c; } }
+  .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; padding: 24px; }
+  .charts[hidden], .table-view[hidden], .grid[hidden] { display: none; }
+  .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin: 0; }
+  .chart h2 { font-size: 14px; margin: 0; }
+  .chart .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .rows { position: relative; display: grid; gap: 6px; }
+  .rows.with-thresholds { padding-top: 16px; }
+  .row {
+    position: relative; display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: center;
+    border-radius: 4px; outline-offset: 2px;
+  }
+  .row .label { color: var(--muted); font-size: 12px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track { display: flex; align-items: center; min-width: 0; height: 22px; }
+  /* Square at the baseline, 4px rounded at the data end; the rest of the track stays free for the value */
+  .bar { height: 14px; width: calc((100% - var(--reserve)) * var(--ratio)); background: var(--series); border-radius: 0 4px 4px 0; }
+  /* The value sits on the card color, so the limit lines of the error chart pass behind it */
+  .track .value {
+    margin-left: 4px; padding: 0 2px; background: var(--panel); font-size: 12px; font-variant-numeric: tabular-nums;
+    white-space: nowrap; display: flex; align-items: center; gap: 4px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.good { background: var(--status-good); }
+  .dot.okay { background: var(--status-okay); }
+  .dot.poor { background: var(--status-poor); }
+  .threshold {
+    position: absolute; top: 0; bottom: 0; width: 1px; background: var(--hairline); pointer-events: none;
+    left: calc(140px + (100% - 140px - var(--reserve)) * var(--ratio));
+  }
+  .threshold span { position: absolute; top: 0; left: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .charts.hovering .row:not(.hovered) { opacity: .35; }
+  .tooltip {
+    position: fixed; z-index: 5; pointer-events: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.15); font-size: 12px;
+  }
+  .tooltip[hidden] { display: none; }
+  .tooltip strong { display: block; font-size: 14px; }
+  .tooltip span { color: var(--muted); }
+  .table-view { padding: 24px; overflow-x: auto; }
+  .table-view table { border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); min-width: 100%; }
+  .table-view th, .table-view td { padding: 6px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  .table-view th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .table-view td.number { text-align: right; font-variant-numeric: tabular-nums; }
+  .viewer {
+    position: fixed; inset: 0; z-index: 10; display: grid; grid-template-rows: auto 1fr;
+    background: #0c0a09; color: #f5f5f4;
+  }
+  .viewer[hidden] { display: none; }
+  .viewer-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-width: 0; }
+  .viewer-bar > * { flex: none; white-space: nowrap; }
+  .viewer-bar b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .viewer-bar .count { margin-left: auto; color: #a8a29e; font-variant-numeric: tabular-nums; }
+  .viewer-bar .close {
+    background: transparent; color: inherit; border: 0; font-size: 26px; line-height: 1; padding: 2px 8px; cursor: pointer;
+  }
+  .viewer-stage {
+    position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px 72px 24px;
+  }
+  .viewer .nav {
+    position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%;
+    border: 0; background: rgba(255, 255, 255, .14); color: #fff; font-size: 28px; line-height: 1; cursor: pointer;
+  }
+  .viewer .nav.prev { left: 14px; }
+  .viewer .nav.next { right: 14px; }
+  .viewer .nav:disabled { opacity: .25; cursor: default; }
+  .viewer .busy { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0; }
   @media (max-width: 700px) {
     header { padding: 12px 16px; }
     .grid { padding: 16px; grid-template-columns: 1fr; }
+    .charts { padding: 16px; grid-template-columns: 1fr; }
+    .table-view { padding: 16px; }
+    .row { grid-template-columns: 100px 1fr; }
+    .threshold { left: calc(110px + (100% - 110px - var(--reserve)) * var(--ratio)); }
+    .viewer-stage { padding: 8px 8px 72px; }
+    .viewer-bar { flex-wrap: wrap; }
+    .viewer-actions { order: 1; flex-basis: 100%; }
+    .viewer .nav { top: auto; bottom: 14px; transform: none; }
   }
 </style>
 </head>
@@ -83,9 +167,25 @@
 <header>
   <h1>Gallery</h1>
   <a href="/">← Converter</a>
+  <nav class="views" aria-label="View">
+    <button type="button" data-view="grid" class="active">Tiles</button>
+    <button type="button" data-view="charts">Charts</button>
+    <button type="button" data-view="tableView">Table</button>
+  </nav>
   <div class="busy on" id="busy"><div class="spinner"></div><span id="busyText">Loading gallery…</span></div>
 </header>
 <main class="grid" id="grid"></main>
+<section class="charts" id="charts" hidden></section>
+<section class="table-view" id="tableView" hidden>
+  <table>
+    <thead><tr>
+      <th>Image</th><th>Source</th><th>Preset</th><th>Error</th><th>Rating</th>
+      <th>Colors</th><th>Paths</th><th>Curves</th><th>Size</th><th>Time</th>
+    </tr></thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+</section>
+<div class="tooltip" id="tooltip" role="status" hidden></div>
 <p class="empty" id="empty">No images yet. Add some to the img/ folder or convert one on the main page.</p>
 
 <template id="cardTemplate">
@@ -114,16 +214,55 @@
   </article>
 </template>
 
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-bar">
+    <b id="viewerName"></b>
+    <span class="badge preset" id="viewerPreset"></span>
+    <span id="viewerError"></span>
+    <span class="count" id="viewerCount"></span>
+    <div class="actions viewer-actions">
+      <a class="download" id="viewerSvg" title="Download SVG">↓ SVG</a>
+      <select class="scale" id="viewerScale" aria-label="PNG size"></select>
+      <button class="png" id="viewerPng" type="button" title="Download PNG of the chosen size">↓ PNG</button>
+    </div>
+    <button class="close" id="viewerClose" type="button" aria-label="Close" title="Close (Esc)">×</button>
+  </div>
+  <div class="viewer-stage" id="viewerStage">
+    <div class="compare ready" id="viewerCompare"></div>
+    <button class="nav prev" id="viewerPrev" type="button" aria-label="Previous image" title="Previous (←)">‹</button>
+    <button class="nav next" id="viewerNext" type="button" aria-label="Next image" title="Next (→)">›</button>
+    <div class="busy" id="viewerBusy"><div class="spinner"></div>Loading…</div>
+  </div>
+</div>
+
 <script src="/static/export.js"></script>
+<script src="/static/compare.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const cards = new Map();
 const STATUS = { queued: "Waiting…", working: "Vectorizing…", measuring: "Measuring error…", done: "", failed: "" };
-let order = "";
+let order = "", tiles = [];
+let shownId = null, shownVersion = 0;
+
+const zoomView = createCompare($("viewerCompare"), () => {
+  const stage = $("viewerStage"), style = getComputedStyle(stage);
+  return {
+    width: stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    height: stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+  };
+});
+
+function stem(name) {
+  return name.replace(/\.[^.]+$/, "");
+}
 
 function createCard(tile) {
   const card = $("cardTemplate").content.firstElementChild.cloneNode(true);
   card.dataset.version = "0";
+  card.dataset.id = tile.id;
+  card.querySelector(".pair").addEventListener("click", () => {
+    if (card.dataset.version !== "0") openViewer(tile.id);
+  });
   card.querySelector(".png").addEventListener("click", async () => {
     const scale = Number(card.querySelector(".scale").value);
     const status = card.querySelector(".status");
@@ -161,7 +300,7 @@ function fill(card, tile) {
     const base = `/api/gallery/${tile.id}/`;
     if (!field("original").getAttribute("src")) field("original").src = base + "original.png";
     field("svg").src = `${base}image.svg?v=${tile.version}`;
-    card.dataset.stem = tile.name.replace(/\.[^.]+$/, "");
+    card.dataset.stem = stem(tile.name);
     field("download").href = field("svg").src;
     field("download").download = card.dataset.stem + ".svg";
     fillScaleSelect(field("scale"), tile.width, tile.height);
@@ -171,6 +310,7 @@ function fill(card, tile) {
 }
 
 function render(data) {
+  tiles = data.tiles;
   const ids = data.tiles.map((tile) => tile.id);
   for (const tile of data.tiles) fill(cards.get(tile.id) || createCard(tile), tile);
   for (const [id, card] of cards) {
@@ -184,7 +324,243 @@ function render(data) {
   $("empty").style.display = ids.length ? "none" : "block";
   $("busy").classList.toggle("on", data.pending > 0);
   $("busyText").textContent = `Vectorizing… ${data.pending} left`;
+  // Keep an open viewer in sync, e.g. when a history tile gets a new result
+  if (shownId) showTile(shownId);
+  renderCharts();
+  renderTable();
 }
+
+const METRICS = [
+  { key: "error", title: "Error", note: "Average color difference to the original, lower is better", reserve: 92,
+    format: (tile) => tile.error.toFixed(2) },
+  { key: "bytes", title: "File size", note: "SVG size in KB", reserve: 64, format: (tile) => kilobytes(tile.bytes) },
+  { key: "curves", title: "Curves", note: "Bezier curves in the SVG", reserve: 56, format: (tile) => tile.curves.toLocaleString() },
+  { key: "paths", title: "Paths", note: "Separate shapes in the SVG", reserve: 48, format: (tile) => tile.paths.toLocaleString() },
+  { key: "colors", title: "Colors", note: "Flat colors after merging", reserve: 32, format: (tile) => String(tile.colors) },
+  { key: "seconds", title: "Time", note: "Conversion time; only measured for img/ images", reserve: 48,
+    format: (tile) => tile.seconds + " s" },
+];
+const ERROR_LIMITS = [[5, "good < 5"], [12, "okay < 12"]];
+let chartsKey = "", tableKey = "";
+
+function kilobytes(bytes) {
+  return (bytes / 1024).toFixed(0) + " KB";
+}
+
+function label(tile) {
+  return tile.source === "history" ? `${tile.name} (history)` : tile.name;
+}
+
+// Ready tiles, best first; every chart and the table use this order so one image sits on the same row everywhere
+function measured() {
+  return tiles.filter((tile) => tile.error != null).sort((a, b) => a.error - b.error);
+}
+
+function renderCharts() {
+  const ready = measured();
+  const key = ready.map((tile) => `${tile.id}:${tile.version}:${tile.error}`).join("|");
+  if (key === chartsKey) return;
+  chartsKey = key;
+  $("charts").replaceChildren(...ready.length ? METRICS.map((metric) => chart(metric, ready)) : []);
+}
+
+function chart(metric, ready) {
+  const figure = document.createElement("section"), rows = document.createElement("div");
+  figure.className = "chart";
+  figure.append(Object.assign(document.createElement("h2"), { textContent: metric.title }));
+  figure.append(Object.assign(document.createElement("p"), { className: "note", textContent: metric.note }));
+  rows.className = "rows";
+  rows.style.setProperty("--reserve", metric.reserve + "px");
+  const values = ready.map((tile) => tile[metric.key]).filter((value) => value != null);
+  // The error scale always reaches the "okay" limit, so both limit lines fit
+  const top = Math.max(...values, metric.key === "error" ? ERROR_LIMITS[1][0] : 0) || 1;
+  if (metric.key === "error") {
+    rows.classList.add("with-thresholds");
+    for (const [limit, text] of ERROR_LIMITS) {
+      const line = document.createElement("div");
+      line.className = "threshold";
+      line.style.setProperty("--ratio", limit / top);
+      line.append(Object.assign(document.createElement("span"), { textContent: text }));
+      rows.append(line);
+    }
+  }
+  for (const tile of ready) {
+    const value = tile[metric.key], row = document.createElement("div"), track = document.createElement("span");
+    row.className = "row";
+    row.tabIndex = 0;
+    row.dataset.id = tile.id;
+    row.dataset.tip = value == null ? "not measured" : metric.format(tile) + (metric.key === "error" ? ` (${tile.rating})` : "");
+    row.dataset.metric = metric.title;
+    row.append(Object.assign(document.createElement("span"), { className: "label", textContent: label(tile), title: label(tile) }));
+    track.className = "track";
+    const text = document.createElement("span");
+    text.className = "value";
+    if (value == null) {
+      text.textContent = "–";
+    } else {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      bar.style.setProperty("--ratio", value / top);
+      track.append(bar);
+      if (metric.key === "error") {
+        text.append(Object.assign(document.createElement("span"), { className: "dot " + tile.rating }));
+        text.append(`${metric.format(tile)} ${tile.rating}`);
+      } else {
+        text.textContent = metric.format(tile);
+      }
+    }
+    track.append(text);
+    row.append(track);
+    rows.append(row);
+  }
+  figure.append(rows);
+  return figure;
+}
+
+function renderTable() {
+  const key = tiles.map((tile) => `${tile.id}:${tile.version}:${tile.status}:${tile.error}`).join("|");
+  if (key === tableKey) return;
+  tableKey = key;
+  const ready = measured(), rest = tiles.filter((tile) => tile.error == null);
+  $("tableBody").replaceChildren(...[...ready, ...rest].map((tile) => {
+    const row = document.createElement("tr");
+    const cells = [
+      [label(tile)], [tile.source === "history" ? "History" : "img/"], [tile.preset ?? "–"],
+      [tile.error?.toFixed(2), true], [tile.rating], [tile.colors, true], [tile.paths?.toLocaleString(), true],
+      [tile.curves?.toLocaleString(), true], [tile.bytes == null ? null : kilobytes(tile.bytes), true],
+      [tile.seconds == null ? null : tile.seconds + " s", true],
+    ];
+    for (const [value, number] of cells) {
+      row.append(Object.assign(document.createElement("td"), { textContent: value ?? "–", className: number ? "number" : "" }));
+    }
+    return row;
+  }));
+}
+
+function showTip(row, x, y) {
+  const tip = $("tooltip");
+  const value = document.createElement("strong"), name = document.createElement("span");
+  value.textContent = row.dataset.tip;
+  name.textContent = `${row.dataset.metric} · ${row.querySelector(".label").textContent}`;
+  tip.replaceChildren(value, name);
+  tip.hidden = false;
+  tip.style.left = Math.min(x + 14, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.min(y + 14, innerHeight - tip.offsetHeight - 8) + "px";
+  // Highlight the same image in every chart
+  $("charts").classList.add("hovering");
+  for (const item of $("charts").querySelectorAll(".row")) item.classList.toggle("hovered", item.dataset.id === row.dataset.id);
+}
+
+function hideTip() {
+  $("tooltip").hidden = true;
+  $("charts").classList.remove("hovering");
+}
+
+$("charts").addEventListener("pointermove", (event) => {
+  const row = event.target.closest(".row");
+  if (row) showTip(row, event.clientX, event.clientY);
+  else hideTip();
+});
+$("charts").addEventListener("pointerleave", hideTip);
+$("charts").addEventListener("focusin", (event) => {
+  const row = event.target.closest(".row");
+  if (!row) return;
+  const rect = row.getBoundingClientRect();
+  showTip(row, rect.left + 140, rect.top);
+});
+$("charts").addEventListener("focusout", hideTip);
+
+for (const button of document.querySelectorAll("[data-view]")) {
+  button.addEventListener("click", () => {
+    for (const other of document.querySelectorAll("[data-view]")) {
+      other.classList.toggle("active", other === button);
+      $(other.dataset.view).hidden = other !== button;
+    }
+    hideTip();
+  });
+}
+
+function viewable() {
+  return tiles.filter((tile) => tile.version > 0);
+}
+
+function openViewer(id) {
+  $("viewer").hidden = false;
+  document.body.style.overflow = "hidden";
+  showTile(id);
+}
+
+function closeViewer() {
+  $("viewer").hidden = true;
+  document.body.style.overflow = "";
+  shownId = null;
+  // Fresh sources on the next open, so the load events fire again
+  zoomView.original.removeAttribute("src");
+  zoomView.vector.removeAttribute("src");
+}
+
+function showTile(id) {
+  const list = viewable(), index = list.findIndex((tile) => tile.id === id);
+  if (index < 0) return closeViewer();
+  const tile = list[index], base = `/api/gallery/${tile.id}/`;
+  if (shownId !== tile.id) {
+    $("viewerBusy").classList.add("on");
+    zoomView.setSplit(0.5);
+    zoomView.original.src = base + "full.png";
+    fillScaleSelect($("viewerScale"), tile.width, tile.height);
+  }
+  if (shownId !== tile.id || shownVersion !== tile.version) {
+    zoomView.vector.src = `${base}image.svg?v=${tile.version}`;
+    $("viewerSvg").href = zoomView.vector.src;
+    $("viewerSvg").download = stem(tile.name) + ".svg";
+  }
+  shownId = tile.id;
+  shownVersion = tile.version;
+  $("viewerName").textContent = tile.name;
+  $("viewerPreset").textContent = tile.preset + (tile.auto ? " · auto" : "");
+  $("viewerError").textContent = tile.error == null ? "" : `Error ${tile.error.toFixed(2)} (${tile.rating})`;
+  $("viewerError").className = tile.rating || "";
+  $("viewerCount").textContent = `${index + 1} / ${list.length}`;
+  $("viewerPrev").disabled = index === 0;
+  $("viewerNext").disabled = index === list.length - 1;
+}
+
+function step(delta) {
+  const list = viewable(), next = list[list.findIndex((tile) => tile.id === shownId) + delta];
+  if (next) showTile(next.id);
+}
+
+function hideViewerBusy() {
+  const { original, vector } = zoomView;
+  if (original.complete && vector.complete && vector.getAttribute("src")) $("viewerBusy").classList.remove("on");
+}
+
+for (const img of [zoomView.original, zoomView.vector]) {
+  img.addEventListener("load", hideViewerBusy);
+  img.addEventListener("error", () => $("viewerBusy").classList.remove("on"));
+}
+$("viewerPng").addEventListener("click", async () => {
+  const tile = tiles.find((item) => item.id === shownId), scale = Number($("viewerScale").value);
+  try {
+    const response = await fetch(zoomView.vector.src);
+    if (!response.ok) throw new Error("the SVG is no longer in the gallery");
+    await downloadPng(await response.text(), scale, `${stem(tile.name)}@${scale}x.png`);
+  } catch (error) {
+    $("viewerError").textContent = "PNG failed: " + error.message;
+  }
+});
+$("viewerClose").addEventListener("click", closeViewer);
+$("viewerPrev").addEventListener("click", () => step(-1));
+$("viewerNext").addEventListener("click", () => step(1));
+$("viewerStage").addEventListener("click", (event) => {
+  if (event.target === $("viewerStage")) closeViewer();
+});
+document.addEventListener("keydown", (event) => {
+  if ($("viewer").hidden) return;
+  if (event.key === "Escape") closeViewer();
+  else if (event.key === "ArrowLeft") step(-1);
+  else if (event.key === "ArrowRight") step(1);
+});
 
 async function refresh() {
   try {

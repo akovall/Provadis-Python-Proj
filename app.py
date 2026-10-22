@@ -205,6 +205,14 @@ def gallery_original(tile_id: str) -> Response:
     return Response(data, media_type="image/png")
 
 
+@app.get("/api/gallery/{tile_id}/full.png")
+def gallery_full(tile_id: str) -> Response:
+    data = gallery.full_image(tile_id)
+    if data is None:
+        raise HTTPException(404, "not in the gallery")
+    return Response(data, media_type="image/png")
+
+
 @app.get("/api/gallery/{tile_id}/image.svg")
 def gallery_svg(tile_id: str) -> Response:
     data = gallery.file(tile_id, "svg")
