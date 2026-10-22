@@ -23,6 +23,8 @@ def main() -> None:
     parser.add_argument("--detail", type=int, help="curve detail 1-10, higher keeps more points (default: from the preset)")
     parser.add_argument("--speckle", type=int, help="drop shapes smaller than this many pixels (default: from the preset)")
     parser.add_argument("--keep-background", action="store_true", help="keep the background instead of making it transparent")
+    parser.add_argument("--no-outlines", action="store_true", help="keep dark outlines as filled shapes instead of smooth strokes")
+    parser.add_argument("--no-shapes", action="store_true", help="trace ellipses, circles and rectangles like any other shape")
     args = parser.parse_args()
 
     path = Path(args.image)
@@ -33,15 +35,16 @@ def main() -> None:
 
     output = args.output or str(path.with_suffix(".svg"))
     try:
-        image = load(str(path))
-        preset = detect(image) if args.preset == "auto" else args.preset
+        original = load(str(path))
+        preset = detect(original) if args.preset == "auto" else args.preset
         settings = PRESETS[preset] | {name: value for name, value in vars(args).items() if name in PRESETS[preset] and value is not None}
         if args.keep_background:
             settings["remove_background"] = False
         print(f"Preset: {preset}" + (" (auto)" if args.preset == "auto" else ""))
-        flat, _ = quantize(prepare(image), settings["colors"], settings["merge"], settings["remove_background"])
+        flat, _ = quantize(prepare(original), settings["colors"], settings["merge"], settings["remove_background"])
+        size = (original.shape[1], original.shape[0])
         with open(output, "w", encoding="utf-8") as file:
-            file.write(vectorize(flat, settings["detail"], settings["speckle"]))
+            file.write(vectorize(flat, settings["detail"], settings["speckle"], size, not args.no_outlines, not args.no_shapes))
         print(f"SVG saved to {output}")
     except (ValueError, OSError) as error:
         sys.exit(f"Error: {error}")

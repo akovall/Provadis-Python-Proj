@@ -52,6 +52,7 @@
     border: 1px solid var(--border); border-radius: 6px;
   }
   select:disabled { opacity: .4; }
+  .stat.wide { grid-column: span 2; }
   main { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .empty { color: var(--muted); }
   .compare { position: relative; overflow: hidden; display: none; user-select: none; touch-action: none; cursor: zoom-in; }
@@ -126,6 +127,8 @@
     <span id="dropText">Drop a PNG or JPG here, or click to choose</span>
   </label>
 
+  <button id="recommend" disabled title="Tries several settings on this image, compares each with the original and picks the simplest one that still matches closely">★ Recommended for this image</button>
+
   <div class="control">
     <label>Preset</label>
     <div class="presets">
@@ -164,11 +167,24 @@
     <small>Makes the background around the object transparent. Same-colored areas inside the object stay.</small>
   </div>
 
+  <div class="control">
+    <label class="check"><input type="checkbox" id="outlines" checked> Smooth outlines</label>
+    <small>Finds dark contour lines and redraws them smoothly, keeping their thickness from the original.</small>
+  </div>
+
+  <div class="control">
+    <label class="check"><input type="checkbox" id="shapes" checked> Detect simple shapes</label>
+    <small>Areas that are ellipses, circles or rectangles become exact SVG shapes.</small>
+  </div>
+
   <div class="stats">
     <div class="stat"><span>Colors</span><b id="statColors">–</b></div>
-    <div class="stat"><span>Paths</span><b id="statPaths">–</b></div>
+    <div class="stat"><span>Shapes</span><b id="statPaths">–</b></div>
     <div class="stat"><span>Curves</span><b id="statCurves">–</b></div>
     <div class="stat"><span>Size</span><b id="statSize">–</b></div>
+    <div class="stat wide" title="Average color difference (ΔE) between the SVG and the original. Under about 2 is hard to see.">
+      <span>Match with original (lower is closer)</span><b id="statMatch">–</b>
+    </div>
   </div>
 
   <button id="download" disabled>Download SVG</button>
@@ -189,7 +205,7 @@
     <span class="tag" style="top:8px; right:8px">SVG</span>
     <span class="tag" id="hint" style="bottom:8px; left:50%; transform:translateX(-50%)"></span>
   </div>
-  <div class="busy" id="busy"><div class="spinner"></div>Vectorizing…</div>
+  <div class="busy" id="busy"><div class="spinner"></div><span id="busyText">Vectorizing…</span></div>
 </main>
 
 <script src="/static/export.js"></script>
@@ -250,24 +266,15 @@ async function run() {
   const body = { id: imageId };
   for (const name of sliders) body[name] = Number($(name).value);
   body.remove_background = $("background").checked;
+  body.outlines = $("outlines").checked;
+  body.shapes = $("shapes").checked;
   try {
     const response = await fetch("/api/vectorize", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "conversion failed");
-    svgText = data.svg;
-    if (vectorUrl) URL.revokeObjectURL(vectorUrl);
-    vectorUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
-    $("vector").src = vectorUrl;
-    $("statColors").textContent = data.colors;
-    $("statPaths").textContent = data.paths.toLocaleString();
-    $("statCurves").textContent = data.curves.toLocaleString();
-    $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
-    $("download").disabled = false;
-    const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
-    fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
-    $("pngScale").disabled = $("downloadPng").disabled = false;
+    showResult(data);
   } catch (error) {
     $("error").textContent = error.message;
   } finally {
@@ -277,10 +284,67 @@ async function run() {
   }
 }
 
+function showResult(data) {
+  svgText = data.svg;
+  if (vectorUrl) URL.revokeObjectURL(vectorUrl);
+  vectorUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+  $("vector").src = vectorUrl;
+  $("statColors").textContent = data.colors;
+  $("statPaths").textContent = data.paths.toLocaleString();
+  $("statCurves").textContent = data.curves.toLocaleString();
+  $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
+  $("statMatch").textContent = data.match.toFixed(2) + " ΔE";
+  $("download").disabled = false;
+  const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
+  fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
+  $("pngScale").disabled = $("downloadPng").disabled = false;
+}
+
+function applySettings(settings) {
+  for (const [name, value] of Object.entries(settings)) {
+    $(name).value = value;
+    $(name + "Out").textContent = $(name).value;
+  }
+}
+
+$("recommend").addEventListener("click", async () => {
+  if (!imageId || running) return;
+  running = true;
+  $("busyText").textContent = "Comparing settings with the original…";
+  $("busy").classList.add("on");
+  $("error").textContent = "";
+  try {
+    const response = await fetch("/api/recommend", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: imageId, speckle: Number($("speckle").value),
+        remove_background: $("background").checked, outlines: $("outlines").checked, shapes: $("shapes").checked,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "recommendation failed");
+    applySettings(data.settings);
+    markPreset(null);
+    showResult(data);
+  } catch (error) {
+    $("error").textContent = error.message;
+  } finally {
+    running = false;
+    $("busy").classList.remove("on");
+    $("busyText").textContent = "Vectorizing…";
+    if (pending) { pending = false; run(); }
+  }
+});
+
+function enableRecommend(on) {
+  $("recommend").disabled = !on;
+}
+
 async function upload(file) {
   if (!file) return;
   fileName = file.name.replace(/\.[^.]+$/, "");
   imageId = null;
+  enableRecommend(false);
   $("dropText").textContent = file.name;
   $("error").textContent = "";
   $("busy").classList.add("on");
@@ -297,6 +361,7 @@ async function upload(file) {
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
     applyPreset(data.preset, true);
+    enableRecommend(true);
     run();
   } catch (error) {
     $("busy").classList.remove("on");
@@ -395,6 +460,8 @@ compare.addEventListener("pointerup", (event) => {
 compare.addEventListener("pointercancel", endDrag);
 
 $("background").addEventListener("change", () => { markPreset(null); schedule(); });
+$("outlines").addEventListener("change", schedule);
+$("shapes").addEventListener("change", schedule);
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
 const drop = $("drop");
 drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
