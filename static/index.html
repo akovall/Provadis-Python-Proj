@@ -187,6 +187,11 @@
     <small>Areas that are ellipses, circles or rectangles become exact SVG shapes.</small>
   </div>
 
+  <div class="control">
+    <label class="check"><input type="checkbox" id="ai"> AI upscale</label>
+    <small id="aiNote"></small>
+  </div>
+
   <div class="stats">
     <div class="stat"><span>Colors</span><b id="statColors">–</b></div>
     <div class="stat"><span>Layers</span><b id="statLayers">–</b></div>
@@ -290,6 +295,7 @@ async function run() {
   body.seed = seed;
   const layers = $("layers");
   body.max_layers = layersTouched && Number(layers.value) < Number(layers.max) ? Number(layers.value) : null;
+  body.ai_upscale = $("ai").checked;
   try {
     const response = await fetch("/api/vectorize", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -322,6 +328,7 @@ function showResult(data) {
   $("statCurves").textContent = data.curves.toLocaleString();
   $("statSize").textContent = (data.bytes / 1024).toFixed(0) + " KB";
   $("statMatch").textContent = data.match.toFixed(2) + " ΔE";
+  showAiNote(data.ai_seconds);
   $("download").disabled = false;
   const svg = new DOMParser().parseFromString(svgText, "image/svg+xml").documentElement;
   fillScaleSelect($("pngScale"), Number(svg.getAttribute("width")), Number(svg.getAttribute("height")));
@@ -408,6 +415,7 @@ $("recommend").addEventListener("click", async () => {
       body: JSON.stringify({
         id: imageId, speckle: Number($("speckle").value),
         remove_background: $("background").checked, outlines: $("outlines").checked, shapes: $("shapes").checked,
+        ai_upscale: $("ai").checked,
       }),
     });
     const data = await response.json();
@@ -458,6 +466,11 @@ async function upload(file) {
     imageId = data.id;
     applyPreset(data.preset, true);
     enableRecommend(true);
+    aiSkip = data.ai_skip;
+    $("ai").disabled = Boolean(aiSkip);
+    // Remember the choice, so it comes back after an image that could not be upscaled
+    $("ai").checked = aiWanted && !aiSkip;
+    showAiNote(null);
     run();
   } catch (error) {
     $("busy").classList.remove("on");
@@ -470,6 +483,18 @@ async function upload(file) {
 $("background").addEventListener("change", () => { markPreset(null); schedule(); });
 $("outlines").addEventListener("change", schedule);
 $("shapes").addEventListener("change", schedule);
+// AI upscaling is not part of the presets, so switching it keeps the preset highlighted
+$("ai").addEventListener("change", () => { aiWanted = $("ai").checked; schedule(); });
+
+let aiSkip = null, aiWanted = false;
+const AI_ABOUT = "Upscales small drawings 4× with Real-ESRGAN before tracing, for sharper outlines. Up to 640 px, slower.";
+
+function showAiNote(seconds) {
+  if (aiSkip) $("aiNote").textContent = "Not available for this image: " + aiSkip + ".";
+  else if (seconds != null) $("aiNote").textContent = `Upscaled in ${seconds} s. ` + AI_ABOUT;
+  else $("aiNote").textContent = AI_ABOUT;
+}
+showAiNote(null);
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
 const drop = $("drop");
 drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });

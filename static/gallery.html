@@ -284,7 +284,7 @@ function fill(card, tile) {
   show("name", tile.name);
   field("name").title = tile.name;
   show("preset", tile.preset ? tile.preset + (tile.auto ? " · auto" : "") : "…");
-  show("source", tile.source === "history" ? "History" : "img/");
+  show("source", tile.source === "history" ? (tile.ai ? "History · AI" : "History") : "img/");
   show("error", tile.error == null ? null : `${tile.error.toFixed(2)} (${tile.rating})`);
   field("error").className = "error " + (tile.rating || "");
   show("colors", tile.colors);

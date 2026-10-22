@@ -4,6 +4,7 @@ from pathlib import Path
 
 from preprocess import load, prepare, quantize
 from presets import PRESETS, detect
+from upscale import skip_reason, upscale
 from vectorize import vectorize
 
 EXTENSIONS = {".jpg", ".jpeg", ".png"}
@@ -26,6 +27,10 @@ def main() -> None:
     parser.add_argument("--no-outlines", action="store_true", help="keep dark outlines as filled shapes instead of smooth strokes")
     parser.add_argument("--no-shapes", action="store_true", help="trace ellipses, circles and rectangles like any other shape")
     parser.add_argument("--seed", type=int, default=0, help="another number gives another variant of the colors and layers")
+    parser.add_argument(
+        "--ai-upscale", action="store_true",
+        help="upscale small drawings 4x with Real-ESRGAN before tracing, for sharper outlines (needs onnxruntime)",
+    )
     args = parser.parse_args()
 
     path = Path(args.image)
@@ -42,7 +47,15 @@ def main() -> None:
         if args.keep_background:
             settings["remove_background"] = False
         print(f"Preset: {preset}" + (" (auto)" if args.preset == "auto" else ""))
-        flat, _ = quantize(prepare(original), settings["colors"], settings["merge"], settings["remove_background"], args.seed)
+        image = original
+        if args.ai_upscale:
+            reason = skip_reason(original)
+            if reason:
+                print(f"AI upscale skipped: {reason}")
+            else:
+                image = upscale(original)
+                print("AI upscale: done")
+        flat, _ = quantize(prepare(image), settings["colors"], settings["merge"], settings["remove_background"], args.seed)
         size = (original.shape[1], original.shape[0])
         with open(output, "w", encoding="utf-8") as file:
             file.write(vectorize(flat, settings["detail"], settings["speckle"], size, not args.no_outlines, not args.no_shapes))
