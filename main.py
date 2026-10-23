@@ -1,3 +1,10 @@
+"""Command line: convert one JPG or PNG image to SVG.
+
+Example: python main.py logo.png --preset logo --text
+The steps are the same as on the web page: pick the settings, optionally upscale with AI,
+reduce the image to flat colors, then trace those colors into an SVG.
+"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -7,10 +14,11 @@ from presets import PRESETS, detect
 from upscale import skip_reason, upscale
 from vectorize import vectorize
 
-EXTENSIONS = {".jpg", ".jpeg", ".png"}
+EXTENSIONS = {".jpg", ".jpeg", ".png"}  # the image types OpenCV reads reliably here
 
 
 def main() -> None:
+    """Read the options, convert the image and save the SVG; errors end the program with a message."""
     parser = argparse.ArgumentParser(description="Convert a JPG or PNG image to SVG.")
     parser.add_argument("image", help="path to a .jpg, .jpeg or .png file")
     parser.add_argument("--output", help="path to the output .svg file (default: next to the input image)")
@@ -18,11 +26,12 @@ def main() -> None:
         "--preset", choices=["auto", *PRESETS], default="auto",
         help="settings for the kind of image (default: auto, guessed from the image)",
     )
-    # The options below override the preset's values
+    # The options below override the preset's values; left out, they stay None and the preset decides
     parser.add_argument("--colors", type=int, help="maximum number of colors (default: from the preset)")
     parser.add_argument("--merge", type=float, help="merge colors closer than this ΔE (default: from the preset)")
     parser.add_argument("--detail", type=int, help="curve detail 1-10, higher keeps more points (default: from the preset)")
     parser.add_argument("--speckle", type=int, help="drop shapes smaller than this many pixels (default: from the preset)")
+    # Switches: on/off choices that are not part of the presets
     parser.add_argument("--keep-background", action="store_true", help="keep the background instead of making it transparent")
     parser.add_argument("--no-outlines", action="store_true", help="keep dark outlines as filled shapes instead of smooth strokes")
     parser.add_argument("--no-shapes", action="store_true", help="trace ellipses, circles and rectangles like any other shape")
@@ -37,20 +46,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Check the input before any slow step, so a typo fails at once
     path = Path(args.image)
     if not path.is_file():
         sys.exit(f"Error: file not found: {path}")
     if path.suffix.lower() not in EXTENSIONS:
         sys.exit("Error: only .jpg, .jpeg and .png files are supported")
 
-    output = args.output or str(path.with_suffix(".svg"))
+    output = args.output or str(path.with_suffix(".svg"))  # photo.png -> photo.svg
     try:
         original = load(str(path))
         preset = detect(original) if args.preset == "auto" else args.preset
+        # Preset values first, then every option the user gave on the command line
         settings = PRESETS[preset] | {name: value for name, value in vars(args).items() if name in PRESETS[preset] and value is not None}
         if args.keep_background:
             settings["remove_background"] = False
         print(f"Preset: {preset}" + (" (auto)" if args.preset == "auto" else ""))
+        # AI upscaling is optional: if it is not possible (no onnxruntime, image too big),
+        # the conversion still runs on the original image
         image, upscaled = original, False
         if args.ai_upscale:
             reason = skip_reason(original)
@@ -59,10 +72,13 @@ def main() -> None:
             else:
                 image, upscaled = upscale(original), True
                 print("AI upscale: done")
+        # The upscaled image already has sharp edges, so it is not sharpened again
+        # (that would make letters jagged) and its soft edge pixels go to the nearest real color
         flat, _ = quantize(
             prepare(image, sharpen=not upscaled), settings["colors"], settings["merge"], settings["remove_background"],
             args.seed, soft_edges=upscaled,
         )
+        # The SVG shows at the original image size, whatever size it was traced at
         size = (original.shape[1], original.shape[0])
         with open(output, "w", encoding="utf-8") as file:
             file.write(vectorize(
@@ -70,7 +86,7 @@ def main() -> None:
                 separate=args.layers, lettering=args.text,
             ))
         print(f"SVG saved to {output}")
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError) as error:  # unreadable image, empty picture, file not writable
         sys.exit(f"Error: {error}")
 
 
