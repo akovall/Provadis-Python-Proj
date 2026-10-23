@@ -1,4 +1,4 @@
-# Provadis-Python-Proj
+# Vectra
 
 A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector graphics (`.svg`), with a command line and a web page with live sliders.
 
