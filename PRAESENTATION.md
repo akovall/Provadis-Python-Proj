@@ -55,7 +55,27 @@ Anschließend wird jede Farbe zu einer eigenen Ebene. Die Ebenen werden überein
 
 Danach werden die Pixelränder, die aus Treppenstufen bestehen, in glatte **Bézierkurven** umgewandelt. Das Programm findet zuerst die echten Ecken, damit sie nicht abgerundet werden, glättet die Abschnitte dazwischen und passt die Kurven mit dem Verfahren von Schneider an. Auch dieser Algorithmus ist selbst mit NumPy geschrieben und nutzt alle Prozessorkerne. So werden aus Tausenden Punkten wenige Kurven: Die Datei ist klein, und der Rand bleibt bei jeder Vergrößerung glatt.
 
-Am Ende zeichnet das Programm das SVG mit OpenCV wieder als Bild und vergleicht es über den Farbabstand ΔE mit dem Original. Daraus entsteht eine einzige Zahl, die zeigt, wie ähnlich das Ergebnis dem Ausgangsbild ist. Die Weboberfläche läuft mit **FastAPI** und **uvicorn**. Sie speichert Zwischenergebnisse, deshalb wird beim Verschieben eines Reglers nur der geänderte Schritt neu berechnet. Für den PNG-Export und die Bilder in der Galerie wird **resvg** verwendet.
+Am Ende zeichnet das Programm das SVG mit OpenCV wieder als Bild und vergleicht es über den Farbabstand ΔE mit dem Original. Daraus entsteht eine einzige Zahl, die zeigt, wie ähnlich das Ergebnis dem Ausgangsbild ist. Die Weboberfläche läuft mit **FastAPI** und **uvicorn**. Sie speichert Zwischenergebnisse, deshalb wird beim Verschieben eines Reglers nur der geänderte Schritt neu berechnet. Die Galerie misst die Qualität zusätzlich mit **resvg**, das SVG genau wie ein Browser zeichnet; den PNG-Export erledigt der Browser selbst.
+
+### Bibliotheken und welche Probleme sie lösen
+
+- **OpenCV** (`opencv-python`) übernimmt die Bildverarbeitung in allen Schritten:
+  - `imread` / `imdecode` öffnen PNG- und JPG-Dateien, auch Uploads aus dem Browser, und `imencode` speichert die PNGs der Galerie.
+  - `Sobel` misst Helligkeitsänderungen und unterscheidet so Fotos von Zeichnungen mit flachen Flächen (Presets).
+  - `kmeans` findet die Randfarben, und `connectedComponents` behält nur die Flächen dieser Farben, die den Rand berühren. So wird ein weißer Fleck im Objekt nicht auch durchsichtig.
+  - `pyrMeanShiftFiltering` mittelt ähnliche Nachbarpixel, ohne die Grenzen zu verwischen. Ohne diesen Filter würden JPEG-Rauschen und Texturen zu Tausenden winziger Formen.
+  - `cvtColor` rechnet in den Lab-Farbraum um, und `kmeans` wählt die Palette: eine schnelle C++-Implementierung statt einer langsamen Python-Schleife.
+  - `connectedComponentsWithStats` und `findContours` finden die Flächen und ihre Ränder, `dilate` / `morphologyEx` schließen Lücken zwischen Ebenen, und `moments`, `fitEllipse` und `minAreaRect` liefern Mittelpunkt, Größe und Winkel für den Test auf Kreise, Ellipsen und Rechtecke.
+  - `distanceTransform` liefert für jeden Punkt den Abstand zum Rand, also die Dicke einer Konturlinie an dieser Stelle.
+  - `fillPoly` und `ellipse` zeichnen das SVG wieder in Pixel, für den Live-Ähnlichkeitswert.
+- **NumPy** verarbeitet das ganze Bild als Array, ohne Schleifen über Pixel. Alles, was OpenCV nicht bietet, ist damit geschrieben: das Zhang-Suen-Skelett, die Bézier-Anpassung nach Schneider, die Eckenerkennung, das Mitteln der Buchstaben und die ΔE-Berechnung.
+- **onnxruntime** führt das Netz Real-ESRGAN auf einer normalen CPU aus, ohne gigabytegroßes PyTorch und ohne Grafikkarte. Ohne Upscaling werden Buchstaben und Linien in kleinen Bildern wellig. Ist die Bibliothek nicht installiert, wird das KI-Upscaling einfach abgeschaltet.
+- **resvg** (`resvg-py`) zeichnet ein SVG genau wie ein Browser in Pixel. Die Galerie misst damit die Qualität, denn OpenCV kann kein SVG lesen.
+- **FastAPI** macht aus Python-Funktionen eine Web-API (Upload, Vektorisieren, Galerie). Die **pydantic**-Modelle prüfen die Eingaben, deshalb bekommt eine Anfrage mit `colors=500` sofort einen Fehler, statt die Berechnung zu stören.
+- **uvicorn** ist der Webserver, der die FastAPI-App startet und dem Browser antwortet.
+- **python-multipart** ermöglicht FastAPI das Empfangen hochgeladener Dateien (`UploadFile`). Ohne diese Bibliothek funktioniert der Bild-Upload nicht.
+- **Python-Standardbibliothek:** `concurrent.futures` verteilt die Kurvenanpassung auf alle Prozessorkerne, `threading` erstellt die Galerie im Hintergrund, ohne den Nutzer zu bremsen, und `argparse` liest die Kommandozeilenoptionen in `main.py`.
+- **Im Browser** kommt die Seite ohne Framework aus: Der PNG-Export zeichnet das SVG auf ein `<canvas>` (`static/export.js`).
 
 ### Alle Algorithmen in je drei Sätzen
 

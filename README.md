@@ -22,6 +22,26 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 11. `static/compare.js` (with `compare.css`) is the original-vs-SVG view with the split handle and click-to-zoom, used by the main page and the gallery viewer; `static/export.js` saves PNGs.
 12. `upscale.py` is the optional AI upscaling (see [AI upscale](#ai-upscale)); the model is in `models/`.
 
+## Libraries and the problems they solve
+
+- **OpenCV** (`opencv-python`) does the image processing in every step:
+  - `imread` / `imdecode` open PNG and JPG files, including uploads from the browser, and `imencode` saves the gallery's PNGs.
+  - `Sobel` measures brightness changes, which tells photos apart from drawings with flat fills (presets).
+  - `kmeans` finds the border colors and `connectedComponents` keeps only the areas of those colors that touch the edge, so a white spot inside the object does not become transparent too.
+  - `pyrMeanShiftFiltering` averages similar neighboring pixels without blurring the borders; without it JPEG noise and textures would turn into thousands of tiny shapes.
+  - `cvtColor` converts to Lab and `kmeans` picks the palette: a fast C++ implementation instead of a slow Python loop.
+  - `connectedComponentsWithStats` and `findContours` find the areas and their borders, `dilate` / `morphologyEx` close gaps between layers, and `moments`, `fitEllipse` and `minAreaRect` give center, size and angle to test for circles, ellipses and rectangles.
+  - `distanceTransform` gives every point's distance to the edge, which is the thickness of an outline at that point.
+  - `fillPoly` and `ellipse` draw the SVG back into pixels for the live match score.
+- **NumPy** handles the whole image as an array, without loops over pixels. Everything OpenCV does not offer is written on it: the Zhang-Suen skeleton, the Schneider Bezier fit, corner detection, letter averaging and the ΔE calculation.
+- **onnxruntime** runs the Real-ESRGAN network on an ordinary CPU, without gigabytes of PyTorch and without a graphics card. Without it small images give wavy letters and lines; if it is not installed, AI upscaling is simply switched off.
+- **resvg** (`resvg-py`) renders an SVG into pixels exactly like a browser does. The gallery uses it to measure quality, because OpenCV cannot read SVG.
+- **FastAPI** turns Python functions into a web API (upload, vectorize, gallery). Its **pydantic** models check the input, so a request with `colors=500` gets an error right away instead of breaking the calculation.
+- **uvicorn** is the web server that runs the FastAPI app and answers the browser.
+- **python-multipart** lets FastAPI receive uploaded files (`UploadFile`); without it the image upload form does not work.
+- **Python standard library:** `concurrent.futures` spreads the curve fitting over all CPU cores, `threading` builds the gallery in the background without slowing down the user, and `argparse` reads the command line options in `main.py`.
+- **In the browser** the page needs no framework: PNG export draws the SVG onto a `<canvas>` (`static/export.js`).
+
 ## Algorithmen kurz erklärt (Deutsch)
 
 Jeder Algorithmus in drei Sätzen, in der Reihenfolge der Pipeline:
