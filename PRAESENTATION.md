@@ -45,6 +45,18 @@ app.py       : Web-API mit Caching   ·   gallery.py: Galerie im Hintergrund
 | `upscale.py` | 4×-Upscaling kleiner Zeichnungen mit einem neuronalen Netz |
 | `text.py` | Schriftzüge finden und jede Kopie eines Buchstabens aus einer gemeinsamen Form zeichnen |
 
+### Der Ablauf in Worten: was passiert, warum und womit
+
+Zuerst schaut das Programm sich das Bild an und entscheidet, ob es ein Foto, ein Logo oder eine Zeichnung ist. Davon hängen die Einstellungen ab: wie viele Farben bleiben, wie stark geglättet wird und welche kleinen Flecken wegfallen. Dafür misst **OpenCV**, welcher Anteil des Bildes aus ruhigen, gleichmäßigen Flächen besteht, und **NumPy** zählt, wie viele Farben fast die ganze Fläche abdecken. Ist das Bild klein, kann es vorher mit dem neuronalen Netz Real-ESRGAN vergrößert werden, das **onnxruntime** direkt auf der CPU ausführt. In einem kleinen Bild sind Buchstaben und dünne Linien nur ein paar Pixel breit, und ohne Vergrößerung werden ihre Kanten wellig.
+
+Dann wird das Bild mit **OpenCV** bereinigt. Der Hintergrund wird über die Farben am Bildrand erkannt und durchsichtig gemacht. Rauschen und Texturen glättet der Mean-Shift-Filter, und die Grenzen zwischen Farben werden geschärft, damit an den Kanten keine überflüssigen Streifen entstehen. Danach wählt **k-means aus OpenCV** die 10 bis 20 wichtigsten Farben, und jedes Pixel bekommt die nächstliegende davon. Die Farben werden im Lab-Farbraum verglichen, weil dort der Abstand zwischen zwei Farben ungefähr dem entspricht, was ein Mensch sieht. Das ist nötig, weil ein SVG klare Flächen in einer Farbe braucht und nicht Millionen von Farbtönen.
+
+Anschließend wird jede Farbe zu einer eigenen Ebene. Die Ebenen werden übereinandergelegt: große unten, kleine oben. So lässt sich ein Gesicht als eine ganze Form zeichnen, und das Auge liegt einfach darauf, ohne Loch im Gesicht. Dadurch gibt es weniger Formen, und das SVG lässt sich bequem in einem Editor bearbeiten. Die Flächen und ihre Ränder findet **OpenCV** (`connectedComponents`, `findContours`). Für jede Fläche wird geprüft, ob sie ein Kreis, eine Ellipse oder ein Rechteck ist. Wenn ja, schreibt das Programm ein echtes `<circle>` oder `<rect>` in die Datei statt einer Kurve aus hundert Punkten. Dünne dunkle Umrisse werden auf ihre Mittellinie reduziert und als Linie mit passender Dicke gespeichert. Gleiche Buchstaben im Text werden zu einer gemeinsamen Form gemittelt, deshalb sieht jedes „a“ gleich sauber aus. Diese drei Algorithmen (Formen, Umrisse, Buchstaben) haben wir selbst mit **NumPy** geschrieben.
+
+Danach werden die Pixelränder, die aus Treppenstufen bestehen, in glatte **Bézierkurven** umgewandelt. Das Programm findet zuerst die echten Ecken, damit sie nicht abgerundet werden, glättet die Abschnitte dazwischen und passt die Kurven mit dem Verfahren von Schneider an. Auch dieser Algorithmus ist selbst mit NumPy geschrieben und nutzt alle Prozessorkerne. So werden aus Tausenden Punkten wenige Kurven: Die Datei ist klein, und der Rand bleibt bei jeder Vergrößerung glatt.
+
+Am Ende zeichnet das Programm das SVG mit OpenCV wieder als Bild und vergleicht es über den Farbabstand ΔE mit dem Original. Daraus entsteht eine einzige Zahl, die zeigt, wie ähnlich das Ergebnis dem Ausgangsbild ist. Die Weboberfläche läuft mit **FastAPI** und **uvicorn**. Sie speichert Zwischenergebnisse, deshalb wird beim Verschieben eines Reglers nur der geänderte Schritt neu berechnet. Für den PNG-Export und die Bilder in der Galerie wird **resvg** verwendet.
+
 ### Alle Algorithmen in je drei Sätzen
 
 In der Reihenfolge der Pipeline:
