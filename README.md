@@ -97,7 +97,14 @@ python main.py --help
 uvicorn app:app --reload
 ```
 
-Open http://127.0.0.1:8000 and drop an image on the page. A preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. The SVG starts as **one layer with all colors**, which is fast even for big photos. **Separate into layers** stacks the shapes from big to small (starting at about 15 layers); then the **Layers** slider sets about how many layers there are (within ±3, all the way right keeps every layer), **Regenerate layers** makes another variant, and Smooth outlines / Detect simple shapes become available. Pictures that are too detailed for layers (more than 1000 areas, like busy photos) stay one layer, and the page says so. The **Layers** panel on the right lists every layer, top layer first; the eye button hides a layer (hidden layers are left out of the download). The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
+Open http://127.0.0.1:8000 and drop an image on the page.
+
+The page has two modes, switched at the top of the left panel and remembered by the browser:
+
+- **Newbie** (the default on the first visit): everything is automatic. Only the Logo / Cartoon / Photo buttons, **Remove background**, the numbers and the downloads are shown. The SVG is one layer, and **AI upscale** is switched on whenever the image allows it (up to 1024 px), except with the Photo preset; a line under the presets says whether it is on. Switching back to Newbie drops your own settings and uses the automatic ones again.
+- **Pro**: all settings described below. **✎ Edit** from the gallery always opens Pro, because the image comes with its own settings.
+
+In Pro mode a preset is picked automatically; switch it with the Logo / Cartoon / Photo buttons or move the sliders. The SVG starts as **one layer with all colors**, which is fast even for big photos. **Separate into layers** stacks the shapes from big to small (starting at about 15 layers); then the **Layers** slider sets about how many layers there are (within ±3, all the way right keeps every layer), **Regenerate layers** makes another variant, and Smooth outlines / Detect simple shapes become available. Pictures that are too detailed for layers (more than 1000 areas, like busy photos) stay one layer, and the page says so. The **Layers** panel on the right lists every layer, top layer first; the eye button hides a layer (hidden layers are left out of the download). The **Match** value is the average color difference (ΔE) between the SVG and the original; under about 2 is hard to see. Drag across the preview to compare the original with the SVG, then click **Download SVG**.
 
 ### AI upscale
 

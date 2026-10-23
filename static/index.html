@@ -71,6 +71,9 @@
     padding: 6px 4px; font-weight: 500; white-space: nowrap;
   }
   .presets button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .modes { grid-template-columns: repeat(2, 1fr); margin-top: 0; }
+  body.newbie { grid-template-columns: 300px 1fr; }
+  body.newbie .pro-only, body:not(.newbie) .newbie-only { display: none; }
   .busy {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     display: none; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
@@ -112,7 +115,7 @@
   .layer-list .name small { display: block; color: var(--muted); font-size: 11px; }
   .layers-empty { color: var(--muted); padding: 14px; font-size: 13px; }
   @media (max-width: 900px) {
-    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: auto; }
+    body, body.newbie { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: auto; }
     aside { border-right: 0; border-bottom: 1px solid var(--border); }
     .layers-panel { border-left: 0; border-top: 1px solid var(--border); }
     .layer-list { max-height: 260px; }
@@ -127,6 +130,14 @@
     <a href="/gallery" target="_blank">Gallery ↗</a>
   </div>
 
+  <div class="control">
+    <div class="presets modes" role="group" aria-label="Mode">
+      <button type="button" data-mode="newbie">Newbie</button>
+      <button type="button" data-mode="pro">Pro</button>
+    </div>
+    <small class="newbie-only">Everything is set automatically. Pro shows all settings.</small>
+  </div>
+
   <label class="drop" id="drop">
     <input type="file" id="file" accept=".png,.jpg,.jpeg">
     <span id="dropText">Drop a PNG or JPG here, or click to choose</span>
@@ -139,27 +150,28 @@
       <button type="button" data-preset="cartoon">Cartoon</button>
       <button type="button" data-preset="photo">Photo</button>
     </div>
-    <small>Picked automatically after upload. Moving a slider switches to your own settings.</small>
+    <small>Picked automatically after upload.<span class="pro-only"> Moving a slider switches to your own settings.</span></small>
+    <small class="newbie-only" id="aiStatus"></small>
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <label for="detail">Curve detail <output id="detailOut"></output></label>
     <input type="range" id="detail" min="1" max="10" value="4">
     <small>Lower values use fewer Bezier points and give smoother curves.</small>
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <label for="merge">Color merge range <output id="mergeOut"></output></label>
     <input type="range" id="merge" min="0" max="40" step="1" value="8">
     <small>Colors closer than this ΔE are combined into one.</small>
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <label for="colors">Max colors <output id="colorsOut"></output></label>
     <input type="range" id="colors" min="2" max="48" value="16">
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <label for="speckle">Remove specks <output id="speckleOut"></output></label>
     <input type="range" id="speckle" min="0" max="20" value="4">
     <small>Drops shapes smaller than this many pixels.</small>
@@ -170,12 +182,12 @@
     <small>Makes the background around the object transparent. Same-colored areas inside the object stay.</small>
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <button class="secondary" id="separate" disabled>Separate into layers</button>
     <small id="separateHint">All colors are one layer now (fast). Separating stacks the shapes from big to small, so you can hide layers and set how many there are.</small>
   </div>
 
-  <div class="layer-options" id="layerOptions" hidden>
+  <div class="layer-options pro-only" id="layerOptions" hidden>
   <div class="control">
     <label for="layers">Layers <output id="layersOut">–</output></label>
     <input type="range" id="layers" min="2" max="60" value="15">
@@ -194,7 +206,7 @@
   </div>
   </div>
 
-  <div class="control">
+  <div class="control pro-only">
     <label class="check"><input type="checkbox" id="ai"> AI upscale</label>
     <small id="aiNote"></small>
   </div>
@@ -225,7 +237,7 @@
   <div class="busy" id="busy"><div class="spinner"></div><span id="busyText">Vectorizing…</span></div>
 </main>
 
-<section class="layers-panel">
+<section class="layers-panel pro-only">
   <h2>Layers <span id="layerCount"></span></h2>
   <ul class="layer-list" id="layerList"></ul>
   <div class="layers-empty" id="layersEmpty">The layers appear here, top layer first.</div>
@@ -246,7 +258,7 @@ const viewer = createCompare($("compare"), () => {
   return { width: main.clientWidth - padding, height: small ? innerHeight * 0.7 : main.clientHeight - padding };
 });
 
-let presets = {};
+let presets = {}, activePreset = null, autoPreset = null;
 
 for (const name of sliders) {
   const input = $(name), out = $(name + "Out");
@@ -269,6 +281,7 @@ function applyPreset(name, auto) {
 }
 
 function markPreset(name, auto = false) {
+  activePreset = name;
   for (const button of document.querySelectorAll("[data-preset]")) {
     const active = button.dataset.preset === name;
     button.classList.toggle("active", active);
@@ -278,7 +291,11 @@ function markPreset(name, auto = false) {
 
 for (const button of document.querySelectorAll("[data-preset]")) {
   button.dataset.label = button.textContent;
-  button.addEventListener("click", () => { applyPreset(button.dataset.preset, false); schedule(); });
+  button.addEventListener("click", () => {
+    applyPreset(button.dataset.preset, false);
+    if (mode === "newbie") autoAi();
+    schedule();
+  });
 }
 // The sliders start with the cartoon values
 markPreset("cartoon");
@@ -470,12 +487,14 @@ async function upload(file, saved = null) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "upload failed");
     imageId = data.id;
+    autoPreset = data.preset;
     if (saved) restoreSettings(saved); else applyPreset(data.preset, true);
     enableButtons(true);
     aiSkip = data.ai_skip;
     $("ai").disabled = Boolean(aiSkip);
+    if (mode === "newbie") autoAi();
     // Remember the choice, so it comes back after an image that could not be upscaled
-    $("ai").checked = aiWanted && !aiSkip;
+    else $("ai").checked = aiWanted && !aiSkip;
     showAiNote(null);
     run();
   } catch (error) {
@@ -499,8 +518,49 @@ function showAiNote(seconds) {
   if (aiSkip) $("aiNote").textContent = "Not available for this image: " + aiSkip + ".";
   else if (seconds != null) $("aiNote").textContent = `Upscaled in ${seconds} s. ` + AI_ABOUT;
   else $("aiNote").textContent = AI_ABOUT;
+  if (!imageId) $("aiStatus").textContent = "";
+  else if (aiSkip) $("aiStatus").textContent = "AI upscale: off, " + aiSkip + ".";
+  else if ($("ai").checked) $("aiStatus").textContent = "AI upscale: on" + (seconds != null ? ` (${seconds} s)` : "");
+  else $("aiStatus").textContent = "AI upscale: off (not used for photos).";
 }
 showAiNote(null);
+
+// Newbie mode: everything is automatic, with the sliders, layers and the AI checkbox hidden.
+// Pro mode shows all settings. The choice is remembered in the browser.
+let mode = "newbie";
+try { if (localStorage.getItem("mode") === "pro") mode = "pro"; } catch {}
+
+// AI upscaling helps drawings, logos and small lettering; on photos the gain is small and it is slower.
+function autoAi() {
+  aiWanted = $("ai").checked = !aiSkip && activePreset !== "photo";
+}
+
+function setMode(next) {
+  mode = next;
+  document.body.classList.toggle("newbie", mode === "newbie");
+  for (const button of document.querySelectorAll("[data-mode]")) button.classList.toggle("active", button.dataset.mode === mode);
+  try { localStorage.setItem("mode", mode); } catch {}
+  viewer.layout();  // the layers panel came or went, so the preview has another width
+}
+
+for (const button of document.querySelectorAll("[data-mode]")) {
+  button.addEventListener("click", () => {
+    if (button.dataset.mode === mode) return;
+    setMode(button.dataset.mode);
+    // Back to Newbie: drop the own settings and use the automatic ones again
+    if (mode === "newbie" && imageId) {
+      seed = 0;
+      $("variant").textContent = "";
+      setSeparate(false);
+      $("outlines").checked = $("shapes").checked = true;
+      applyPreset(autoPreset, true);
+      autoAi();
+      showAiNote(null);
+      schedule();
+    }
+  });
+}
+setMode(mode);
 $("file").addEventListener("change", (event) => upload(event.target.files[0]));
 const drop = $("drop");
 drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
@@ -531,6 +591,7 @@ $("download").addEventListener("click", () => {
 // The gallery's Edit button opens /?edit=<tile id>: load that image here with its settings.
 async function openFromGallery(id) {
   history.replaceState(null, "", "/");  // so reloading the page does not open it again
+  setMode("pro");  // the image comes with its own settings, which Newbie mode would hide
   try {
     const listing = await (await fetch("/api/gallery")).json();
     const tile = listing.tiles.find((item) => item.id === id);
