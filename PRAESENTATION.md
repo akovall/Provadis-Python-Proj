@@ -12,7 +12,7 @@ Stichpunkte für die Präsentation, gegliedert nach Themen. Zu jedem Algorithmus
   - Web-App (FastAPI + reines HTML/JS) mit Live-Schiebereglern, Vorher/Nachher-Vergleich, Ebenen-Panel, Galerie und PNG-Export
 - **Technologie:** Python 3.10+, OpenCV, NumPy, FastAPI/Uvicorn, `resvg-py` (SVG-Renderer zum Messen), `onnxruntime` (KI-Upscaling). Frontend ohne Framework.
 - **Umfang:** ca. 3 500 Zeilen (≈ 2 300 Python, ≈ 1 300 HTML/CSS/JS), 13 Pull Requests.
-- **Team:** Andrii Koval und Anna Smahliuk. Gearbeitet wurde mit Feature-Branches und Pull Requests auf GitHub.
+- **Team:** Andrii Koval, Anna Smahliuk und Fabio Klein. Gearbeitet wurde mit Feature-Branches und Pull Requests auf GitHub.
 - **Kernidee:** Am Anfang stand die fertige Bibliothek **vtracer**. Sie wurde schrittweise durch eine **eigene Pipeline** ersetzt (eigene Ebenenbildung, eigene Kurvenanpassung, eigene Formerkennung, eigene Konturlinien).
 
 ---
