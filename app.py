@@ -50,6 +50,7 @@ class Settings(BaseModel):
     seed: int = Field(0, ge=0)  # another seed gives another variant of the colors and layers
     separate: bool = False  # split into layers; otherwise all colors are one layer (fast)
     ai_upscale: bool = False
+    text: bool = False  # the picture has lettering: copies of a letter share one shape
 
 
 @app.get("/")
@@ -142,6 +143,7 @@ def get_trace(
     max_layers: int | None = None,
     seed: int = 0,
     separate: bool = False,
+    lettering: bool = False,
 ) -> Traced:
     """Quantize and trace, reusing the cached results when the settings did not change."""
     key = (colors, merge, remove_background, seed)
@@ -153,9 +155,9 @@ def get_trace(
         except ValueError as error:
             raise HTTPException(400, str(error))
         entry["key"] = key
-    trace_key = (key, speckle, outlines, shapes, max_layers, separate)
+    trace_key = (key, speckle, outlines, shapes, max_layers, separate, lettering)
     if entry["trace_key"] != trace_key:
-        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers, separate)
+        entry["raw"] = trace(entry["quantized"], speckle, outlines, shapes, max_layers, separate, lettering)
         entry["trace_key"] = trace_key
     return entry["raw"]
 
@@ -177,6 +179,7 @@ def convert(settings: Settings) -> dict:
         raw = get_trace(
             entry, settings.colors, settings.merge, settings.remove_background, settings.speckle,
             settings.outlines, settings.shapes, settings.max_layers, settings.seed, settings.separate,
+            settings.text,
         )
         svg = finish(raw, entry["quantized"], settings.detail, entry["size"])
         response = result(entry, svg, settings.remove_background)

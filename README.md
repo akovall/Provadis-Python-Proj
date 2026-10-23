@@ -14,12 +14,13 @@ A small tool that converts raster images (`.jpg`, `.jpeg`, `.png`) to vector gra
 3. `shapes.py` checks every layer against simple forms: layers that are ellipses, circles or rectangles (for example eyes) become exact SVG `<ellipse>`, `<circle>` or `<rect>` elements. Only the visible part has to match, so a shape partly behind another one is recognized too.
 4. `curves.py` draws all other layers with as few Bezier curves as possible: it finds real corners (they stay sharp), smooths the parts between them and fits curves within an error tolerance. The curve detail setting controls the tolerance, so it decides how many Bezier points are kept.
 5. `strokes.py` finds outlines (dark, long, thin shapes like contour lines or a mouth) and draws them on top of everything, around a smooth centerline. The thickness is measured from the original at every point, so lines stay thick or thin where they were, just without the wobble.
-6. `quality.py` draws the SVG back into pixels to measure how closely it matches the original.
-7. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
-8. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
-9. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
-10. `static/compare.js` (with `compare.css`) is the original-vs-SVG view with the split handle and click-to-zoom, used by the main page and the gallery viewer; `static/export.js` saves PNGs.
-11. `upscale.py` is the optional AI upscaling (see [AI upscale](#ai-upscale)); the model is in `models/`.
+6. `text.py` (with **Has text**) finds lettering and draws every copy of a letter from one shared shape (see [Text](#text)).
+7. `quality.py` draws the SVG back into pixels to measure how closely it matches the original.
+8. `presets.py` holds ready-made settings for logos, cartoons and photos and guesses which one fits an image (see [Presets](#presets)).
+9. `vectorize.py` puts it all together, `main.py` is the command line, `app.py` is the web app (FastAPI) and `static/index.html` is its page.
+10. `gallery.py` and `static/gallery.html` are the gallery (see [Gallery](#gallery)).
+11. `static/compare.js` (with `compare.css`) is the original-vs-SVG view with the split handle and click-to-zoom, used by the main page and the gallery viewer; `static/export.js` saves PNGs.
+12. `upscale.py` is the optional AI upscaling (see [AI upscale](#ai-upscale)); the model is in `models/`.
 
 ## Installation
 
@@ -79,6 +80,7 @@ python main.py --help
 | `--layers` | off | Separate into stacked layers (slower; needed for outlines and simple shapes). Too detailed pictures stay one layer. |
 | `--no-shapes` | off | Trace ellipses, circles and rectangles like any other shape. |
 | `--no-outlines` | off | Trace dark outlines like any other shape instead of redrawing them smoothly. |
+| `--text` | off | The image has lettering: every copy of a letter is drawn from one shared shape (see [Text](#text)). |
 | `--ai-upscale` | off | Upscale small drawings 4× with Real-ESRGAN before tracing (see [AI upscale](#ai-upscale)). |
 
 ### Presets
@@ -117,6 +119,12 @@ Small or blurry drawings and logos trace better when they are first upscaled by 
 It is only offered for images up to 1024 px; larger ones already have enough pixels. It helps drawings and logos most, and small lettering: the edges of the upscaled image are already sharp, so the usual edge sharpening is skipped and every edge pixel goes to the nearest real color, which keeps letters straight with sharp corners instead of wavy (for example the text on `img/umbrella.png`). On photos and soft watercolor pictures the gain is small and the model changes the style (darker outlines, flatter shading). Typical time on a laptop CPU: well under a second for 256 px, about a second for 512 px, about 3 s for 880 × 660 px and 5 s for 1024 × 1024 px, which needs about 2.5 GB of memory (measured on Apple Silicon; older Intel laptops can be a few times slower).
 
 In a test with drawings shrunk to 256 px and saved as JPEG, the error of the SVG against the full-size original dropped from 14.5 to 9.2 on the logo, from 15.9 to 10.4 on the dino and from 8.6 to 6.0 on the pixel-art figure.
+
+### Text
+
+Tick **Has text** (command line: `--text`) when the picture has lettering. Traced letters normally come out a little different each time, so two R's of the same word get their own bumps. With this option the letters are found first: small areas of one color with thin strokes, lying on one background color, in a row with other letters of about the same size. Every letter is turned upright along its line, so curved text (like on `img/umbrella.png`) works too. Copies of the same letter, also in another font size, are laid on top of each other and averaged into one clean shape, and every copy is drawn from that shape, turned and scaled back into place. The letters are drawn on top as a **Text** layer.
+
+On `img/umbrella.png` all 19 letters are found and the R's, O's, A's and L's share their shapes. It works best together with **AI upscale**, which gives the letters sharp edges first. A row of shapes only counts as text if at least one of its letters repeats, so drawings are not mistaken for text; words without any repeated letter, and letters that touch each other, are traced normally. It adds about 1–1.5 s.
 
 ### PNG export
 
