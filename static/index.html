@@ -182,6 +182,11 @@
     <small>Makes the background around the object transparent. Same-colored areas inside the object stay.</small>
   </div>
 
+  <div class="control">
+    <label class="check"><input type="checkbox" id="text"> Has text</label>
+    <small>Tick it if the picture has lettering: every copy of a letter (all R's, all O's…) is drawn from one shared, cleaned-up shape, also on curved text.</small>
+  </div>
+
   <div class="control pro-only">
     <button class="secondary" id="separate" disabled>Separate into layers</button>
     <small id="separateHint">All colors are one layer now (fast). Separating stacks the shapes from big to small, so you can hide layers and set how many there are.</small>
@@ -316,6 +321,7 @@ async function run() {
   body.remove_background = $("background").checked;
   body.outlines = $("outlines").checked;
   body.shapes = $("shapes").checked;
+  body.text = $("text").checked;
   body.seed = seed;
   body.separate = separate;
   $("busyText").textContent = separate ? "Separating into layers…" : "Vectorizing…";
@@ -449,6 +455,7 @@ function restoreSettings({ settings, preset, auto }) {
   $("background").checked = settings.remove_background;
   $("outlines").checked = settings.outlines ?? true;
   $("shapes").checked = settings.shapes ?? true;
+  $("text").checked = settings.text ?? false;
   seed = settings.seed ?? 0;
   $("variant").textContent = seed ? "· variant " + (seed + 1) : "";
   setSeparate(Boolean(settings.separate));
@@ -508,6 +515,7 @@ async function upload(file, saved = null) {
 $("background").addEventListener("change", () => { markPreset(null); schedule(); });
 $("outlines").addEventListener("change", schedule);
 $("shapes").addEventListener("change", schedule);
+$("text").addEventListener("change", schedule);
 // AI upscaling is not part of the presets, so switching it keeps the preset highlighted
 $("ai").addEventListener("change", () => { aiWanted = $("ai").checked; schedule(); });
 

@@ -26,6 +26,9 @@ def main() -> None:
     parser.add_argument("--keep-background", action="store_true", help="keep the background instead of making it transparent")
     parser.add_argument("--no-outlines", action="store_true", help="keep dark outlines as filled shapes instead of smooth strokes")
     parser.add_argument("--no-shapes", action="store_true", help="trace ellipses, circles and rectangles like any other shape")
+    parser.add_argument(
+        "--text", action="store_true", help="the image has lettering: draw every copy of a letter from one shared shape",
+    )
     parser.add_argument("--layers", action="store_true", help="separate into stacked layers (slower; needed for outlines and shapes)")
     parser.add_argument("--seed", type=int, default=0, help="another number gives another variant of the colors and layers")
     parser.add_argument(
@@ -64,7 +67,7 @@ def main() -> None:
         with open(output, "w", encoding="utf-8") as file:
             file.write(vectorize(
                 flat, settings["detail"], settings["speckle"], size, not args.no_outlines, not args.no_shapes,
-                separate=args.layers,
+                separate=args.layers, lettering=args.text,
             ))
         print(f"SVG saved to {output}")
     except (ValueError, OSError) as error:

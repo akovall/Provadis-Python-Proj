@@ -5,11 +5,13 @@ import numpy as np
 import layers
 import shapes
 import strokes
+import text
 from curves import refit_all
 from preprocess import UPSCALE, WORK_SIDE
 
 # {"layers": bottom to top, each {"color", "items": [{"form"} or {"loops"}]},
-#  "outlines": drawn over them, "auto_layers": how many layers there were before simplifying}
+#  "outlines": drawn over them, "text": letters drawn over everything (see text.extract),
+#  "auto_layers": how many layers there were before simplifying}
 Traced = dict
 SMOOTH_FLOOR = 2.0  # minimum smoothing (in edge points), pixel edges have stair-steps
 SVG_HEAD = '<?xml version="1.0" encoding="UTF-8"?>\n<svg version="1.1" xmlns="http://www.w3.org/2000/svg" '
@@ -61,6 +63,7 @@ def trace(
     simple_shapes: bool = True,
     max_layers: int | None = None,
     separate: bool = False,
+    lettering: bool = False,
 ) -> Traced:
     """Split a flat-color image into stacked layers and find their forms.
 
@@ -74,17 +77,24 @@ def trace(
     which is fast even for big photos; outlines, simple shapes and `max_layers` then do not apply.
     Pictures too detailed to split (busy photos, see layers.can_layer) also stay one layer;
     the result then has "too_detailed" set.
+
+    With `lettering`, text is found first and taken out of the picture: every copy of a letter
+    is drawn from one shared shape, on top of everything (see text.extract).
     """
     too_detailed = separate and not layers.can_layer(image, speckle)
     if not separate or too_detailed:
+        letters = []
+        if lettering:
+            image, letters = text.extract(layers.remove_specks(image, (speckle * UPSCALE) ** 2 if speckle > 0 else 0))
         flat = layers.flat(image, speckle)
-        return {"layers": [], "flat": flat, "outlines": [], "auto_layers": 1, "too_detailed": too_detailed}
+        return {"layers": [], "flat": flat, "outlines": [], "text": letters, "auto_layers": 1, "too_detailed": too_detailed}
     if max_layers:
         # Building every layer first and removing most of them afterwards would be slow; cutting
         # the picture down to a few areas per wanted layer first is quick.
         image = layers.reduce_colors(image, max(2, round(COLORS_PER_LAYER * max_layers)))
         image = layers.reduce_regions(image, AREAS_PER_LAYER * max_layers, (speckle * UPSCALE) ** 2)
     image = layers.clean(image, speckle)  # once; the rounds below rebuild from this
+    image, letters = text.extract(image) if lettering else (image, [])
     over, found_outlines = strokes.extract(image) if outlines else (None, [])
     outline_layers = len({tuple(o["color"]) for o in found_outlines})
     stack = stack_layers(image, over, simple_shapes)
@@ -105,7 +115,10 @@ def trace(
         groups = layers.group(stack)
         result = collect(stack, groups)
         effect = max(count - (len(result) + outline_layers), 0) / remove
-    return {"layers": result, "flat": [], "outlines": found_outlines, "auto_layers": auto_layers, "too_detailed": False}
+    return {
+        "layers": result, "flat": [], "outlines": found_outlines, "text": letters,
+        "auto_layers": auto_layers, "too_detailed": False,
+    }
 
 
 def collect(stack: list[dict], groups: list[list[int]]) -> list[dict]:
@@ -171,7 +184,8 @@ def finish(traced: Traced, image: np.ndarray, detail: int = 4, size: tuple[int, 
     flat_jobs = [(i, item["loops"][start:start + LOOPS_PER_JOB])
                  for i, item in enumerate(traced["flat"]) for start in range(0, len(item["loops"]), LOOPS_PER_JOB)]
     jobs = [item["loops"] for item in traced_items] + [loops for _, loops in flat_jobs]
-    fitted = refit_all(jobs, error, lerp(115, 50, detail), sigma)
+    corner_angle = lerp(115, 50, detail)
+    fitted = refit_all(jobs, error, corner_angle, sigma)
     paths = iter(fitted[:len(traced_items)])
     flat_paths = [""] * len(traced["flat"])
     for (i, _), d in zip(flat_jobs, fitted[len(traced_items):]):
@@ -202,6 +216,17 @@ def finish(traced: Traced, image: np.ndarray, detail: int = 4, size: tuple[int, 
         parts = [part for part in (strokes.to_svg([o], error, sigma) for o in outlines) if part]
         boxes = [bounds(points, o["width"]) for o in outlines for points, _, _ in o["lines"]]
         groups.append(("Outline", box_attribute(boxes), parts))
+    letters_by_color: dict[tuple, list[dict]] = {}
+    for letter in traced.get("text", []):
+        letters_by_color.setdefault(tuple(letter["color"]), []).append(letter)
+    for letters in letters_by_color.values():
+        parts = [part for letter in letters for part in text.to_svg(letter, error, corner_angle, sigma)]
+        boxes = []
+        for letter in letters:
+            reach = max(np.linalg.norm(loop, axis=1).max() for loop in letter["loops"])
+            boxes += [(x - reach * scale, y - reach * scale, x + reach * scale, y + reach * scale)
+                      for x, y, _, scale in letter["places"]]
+        groups.append((f"Text ×{len(parts)}", box_attribute(boxes), parts))
     body = "\n".join(
         f'<g data-layer="{number}" data-name="{name}" data-box="{box}">\n' + "\n".join(parts) + "\n</g>"
         for number, (name, box, parts) in enumerate(groups, 1)
@@ -222,9 +247,11 @@ def vectorize(
     simple_shapes: bool = True,
     max_layers: int | None = None,
     separate: bool = False,
+    lettering: bool = False,
 ) -> str:
     """Convert a flat-color image to SVG. Higher `detail` keeps more corners and Bezier points."""
-    return finish(trace(image, speckle, outlines, simple_shapes, max_layers, separate), image, detail, size)
+    traced = trace(image, speckle, outlines, simple_shapes, max_layers, separate, lettering)
+    return finish(traced, image, detail, size)
 
 
 def stats(svg: str) -> dict:
